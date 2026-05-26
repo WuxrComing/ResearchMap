@@ -91,6 +91,16 @@ def _migrate_chat_message_runtime_metadata(engine):
             "ALTER TABLE chat_messages ADD COLUMN dispatch_depth INTEGER DEFAULT 0"
         ),
     }
+    indexes_to_create = [
+        "CREATE INDEX IF NOT EXISTS ix_chat_messages_task_id "
+        "ON chat_messages (task_id)",
+        "CREATE INDEX IF NOT EXISTS ix_chat_messages_task_type "
+        "ON chat_messages (task_type)",
+        "CREATE INDEX IF NOT EXISTS ix_chat_messages_root_user_message_id "
+        "ON chat_messages (root_user_message_id)",
+        "CREATE INDEX IF NOT EXISTS ix_chat_messages_target_message_id "
+        "ON chat_messages (target_message_id)",
+    ]
 
     with engine.connect() as conn:
         result = conn.execute(sqlalchemy.text("PRAGMA table_info('chat_messages')"))
@@ -98,6 +108,8 @@ def _migrate_chat_message_runtime_metadata(engine):
         for column, statement in columns_to_add.items():
             if column not in existing_columns:
                 conn.execute(sqlalchemy.text(statement))
+        for statement in indexes_to_create:
+            conn.execute(sqlalchemy.text(statement))
         conn.commit()
 
 

@@ -1,7 +1,24 @@
 import uuid
+import pytest
 from sqlmodel import Session, text
 from app.services.storage import get_engine, init_db
 from app.models.topic import Topic
+
+
+@pytest.fixture(autouse=True)
+def isolated_database(tmp_path, monkeypatch):
+    import app.services.storage as storage
+
+    if storage._engine is not None:
+        storage._engine.dispose()
+    storage._engine = None
+    monkeypatch.setattr(storage.settings, "DATABASE_PATH", str(tmp_path / "test.db"))
+
+    yield
+
+    if storage._engine is not None:
+        storage._engine.dispose()
+    storage._engine = None
 
 
 def test_fts5_tables_exist():
@@ -32,6 +49,38 @@ def test_chat_message_runtime_lineage_columns_exist():
     assert "dispatch_depth" in columns
 
 
+def test_chat_message_runtime_lineage_indexes_exist_on_migrated_table():
+    engine = get_engine()
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE chat_messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT,
+                content TEXT,
+                agent_name TEXT,
+                node_id TEXT,
+                review_status TEXT,
+                review_score INTEGER,
+                review_summary TEXT,
+                redo_count INTEGER,
+                created_at DATETIME
+            )
+        """))
+        conn.commit()
+
+    init_db()
+
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA index_list('chat_messages')"))
+        index_names = {row[1] for row in result.fetchall()}
+
+    assert "ix_chat_messages_task_id" in index_names
+    assert "ix_chat_messages_task_type" in index_names
+    assert "ix_chat_messages_root_user_message_id" in index_names
+    assert "ix_chat_messages_target_message_id" in index_names
+
+
 def test_fts5_insert_trigger():
     init_db()
     engine = get_engine()
@@ -44,12 +93,14 @@ def test_fts5_insert_trigger():
         db.add(topic)
         db.commit()
 
-        # Query FTS table
         with engine.connect() as conn:
+            topic_rowid = conn.execute(
+                text("SELECT rowid FROM topics WHERE id = :topic_id"),
+                {"topic_id": topic.id},
+            ).scalar_one()
             result = conn.execute(
                 text("SELECT rowid FROM topics_fts WHERE topics_fts MATCH 'Testing'")
             )
             rowids = [row[0] for row in result.fetchall()]
 
-        # The topic should be in FTS index
-        assert len(rowids) >= 0  # FTS5 triggers may need content sync, basic check
+        assert topic_rowid in rowids

@@ -1,4 +1,5 @@
 import uuid
+import pytest
 from sqlmodel import Session
 from app.services.storage import get_engine, init_db
 from app.models.topic import Topic
@@ -10,6 +11,22 @@ from app.models.paper_node_link import PaperNodeLink
 from app.models.idea import Idea
 from app.models.negative_memory import NegativeMemory
 from app.models.chat_message import ChatMessage
+
+
+@pytest.fixture(autouse=True)
+def isolated_database(tmp_path, monkeypatch):
+    import app.services.storage as storage
+
+    if storage._engine is not None:
+        storage._engine.dispose()
+    storage._engine = None
+    monkeypatch.setattr(storage.settings, "DATABASE_PATH", str(tmp_path / "test.db"))
+
+    yield
+
+    if storage._engine is not None:
+        storage._engine.dispose()
+    storage._engine = None
 
 
 def test_create_topic():
