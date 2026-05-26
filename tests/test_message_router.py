@@ -105,17 +105,32 @@ class TestBuildSystemPrompt:
 
 
 class TestDefaultAgentPrompts:
-    def test_topic_agent_uses_natural_mentions_for_dispatch(self):
-        topic_prompt = next(
+    def _topic_prompt(self):
+        return next(
             agent["system_prompt"]
             for agent in DEFAULT_AGENTS
             if agent["name"] == "Topic Agent"
         )
 
+    def test_topic_agent_uses_natural_mentions_for_dispatch(self):
+        topic_prompt = self._topic_prompt()
+
         assert ">>DISPATCH>>" not in topic_prompt
         assert ">>END_DISPATCH>>" not in topic_prompt
         assert "@Paper Agent" in topic_prompt
         assert "自然语言" in topic_prompt or "直接在群聊中 @" in topic_prompt
+
+    def test_topic_agent_review_output_rules_are_action_specific(self):
+        topic_prompt = self._topic_prompt()
+
+        assert "每次审查其他 Agent 的回复时，只输出审查卡片" not in topic_prompt
+        assert "action=accept" in topic_prompt
+        assert "审查卡片本身就是你唯一的输出" in topic_prompt
+        assert "action=redo" in topic_prompt
+        assert ">>REDO>>" in topic_prompt
+        assert "action=supplement" in topic_prompt
+        assert "自然语言" in topic_prompt
+        assert "@Agent" in topic_prompt
 
 
 class TestParseDispatchBlocks:
