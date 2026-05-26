@@ -123,8 +123,24 @@ def test_unknown_disabled_mentions_ignored(router):
     assert instructions == {"Paper Agent": "保留启用代理任务。"}
 
 
+def test_disabled_mention_after_enabled_does_not_leak_into_instruction(router):
+    text = "@Paper Agent: keep. @Transfer Agent: ignore this disabled task."
+
+    instructions = split_mention_instructions(text, router, source_agent="Topic Agent")
+
+    assert instructions == {"Paper Agent": "keep."}
+
+
 def test_topic_agent_ignored_inside_topic_messages(router):
     text = "@Topic Agent: 不要派给自己。 @Paper Agent: 检索论文。"
+
+    instructions = split_mention_instructions(text, router, source_agent="Topic Agent")
+
+    assert instructions == {"Paper Agent": "检索论文。"}
+
+
+def test_topic_mention_after_enabled_does_not_leak_inside_topic_messages(router):
+    text = "@Paper Agent: 检索论文。 @Topic Agent: 不要进入 Paper 任务。"
 
     instructions = split_mention_instructions(text, router, source_agent="Topic Agent")
 
@@ -144,6 +160,38 @@ def test_mentions_in_fenced_code_ignored(router):
 
     assert [s.agent_name for s in spans] == ["Memory Agent"]
     assert instructions == {"Memory Agent": "记录真实任务。"}
+
+
+def test_mentions_in_unterminated_fenced_code_ignored(router):
+    text = (
+        "```text\n"
+        "@Paper Agent: 这是未闭合代码块，不应触发。\n"
+        "@Memory Agent: 也不应触发。"
+    )
+
+    stripped = split_mention_instructions(text, router, source_agent="Topic Agent")
+    spans = find_mention_spans(text, router)
+
+    assert spans == []
+    assert stripped == {}
+
+
+def test_mention_suffix_rejects_ascii_letters_and_digits(router):
+    text = "@Paper Agent2 ignore digits. @Paper Agentic ignore letters. @Memory Agent: keep."
+
+    spans = find_mention_spans(text, router)
+    instructions = split_mention_instructions(text, router, source_agent="Topic Agent")
+
+    assert [s.agent_name for s in spans] == ["Memory Agent"]
+    assert instructions == {"Memory Agent": "keep."}
+
+
+def test_mention_suffix_allows_cjk_adjacent_instruction(router):
+    text = "@Paper Agent帮我检索小目标检测论文。"
+
+    instructions = split_mention_instructions(text, router, source_agent="Topic Agent")
+
+    assert instructions == {"Paper Agent": "帮我检索小目标检测论文。"}
 
 
 def test_adjacent_mentions_use_full_message_only_without_non_empty_segment(router):
