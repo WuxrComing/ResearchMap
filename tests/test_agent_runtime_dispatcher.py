@@ -1,16 +1,29 @@
 import pytest
+from datetime import UTC, datetime, timedelta
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.agent_config import AgentConfig
-from app.services.agent_runtime import find_mention_spans, split_mention_instructions
+from app.models.chat_message import ChatMessage
+from app.models.session import Session as ChatSession
+from app.models.topic import Topic
+from app.services.agent_runtime import (
+    AgentDispatcher,
+    find_mention_spans,
+    split_mention_instructions,
+)
 from app.services.message_router import MessageRouter
 
 
 @pytest.fixture
-def runtime_db_session():
+def runtime_engine():
     engine = create_engine("sqlite:///:memory:")
     SQLModel.metadata.create_all(engine)
-    with Session(engine) as session:
+    return engine
+
+
+@pytest.fixture
+def runtime_db_session(runtime_engine):
+    with Session(runtime_engine) as session:
         for agent in [
             AgentConfig(
                 name="Topic Agent",
@@ -55,9 +68,303 @@ def runtime_db_session():
 
 
 @pytest.fixture
+def runtime_session_id(runtime_engine):
+    with Session(runtime_engine) as session:
+        topic = Topic(id="topic-1", title="Topic")
+        chat_session = ChatSession(
+            id="session-1",
+            workspace_id=topic.id,
+            title="Runtime session",
+        )
+        session.add(topic)
+        session.add(chat_session)
+        session.commit()
+    return "session-1"
+
+
+@pytest.fixture
+def dispatcher_context(runtime_engine, runtime_db_session, runtime_session_id):
+    enqueued = []
+    dispatcher = AgentDispatcher(runtime_engine, enqueued.append)
+    return dispatcher, enqueued, runtime_session_id
+
+
+def save_message(runtime_engine, **kwargs):
+    with Session(runtime_engine) as session:
+        message = ChatMessage(**kwargs)
+        session.add(message)
+        session.commit()
+        session.refresh(message)
+        return message
+
+
+def message_kwargs(session_id, message_id, role, content, **kwargs):
+    return {
+        "id": message_id,
+        "session_id": session_id,
+        "role": role,
+        "content": content,
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC)
+        + timedelta(minutes=int(message_id.split("-")[-1])),
+        **kwargs,
+    }
+
+
+@pytest.fixture
 def router(runtime_db_session):
     return MessageRouter(runtime_db_session)
 
+
+def test_user_message_without_mention_creates_topic_user_request_task(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, enqueued, session_id = dispatcher_context
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(session_id, "msg-1", "user", "Help me map this idea."),
+    )
+
+    tasks = dispatcher.handle_message_saved(message.id)
+
+    assert tasks == enqueued
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.target_agent == "Topic Agent"
+    assert task.task_type == "user_request"
+    assert task.root_user_message_id == message.id
+    assert task.trigger_message_id == message.id
+    assert task.target_message_id is None
+    assert task.instruction == message.content
+
+
+def test_user_message_with_paper_mention_creates_paper_user_request_task(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, _, session_id = dispatcher_context
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-1",
+            "user",
+            "@Paper Agent find related papers.",
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(message.id)
+
+    assert len(tasks) == 1
+    assert tasks[0].target_agent == "Paper Agent"
+    assert tasks[0].task_type == "user_request"
+    assert tasks[0].instruction == "find related papers."
+
+
+def test_user_message_with_multiple_mentions_creates_only_mentioned_user_request_tasks(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, _, session_id = dispatcher_context
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-1",
+            "user",
+            "@Paper Agent find papers. @Memory Agent recall preferences.",
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(message.id)
+
+    assert [task.target_agent for task in tasks] == ["Paper Agent", "Memory Agent"]
+    assert {task.task_type for task in tasks} == {"user_request"}
+    assert "Topic Agent" not in {task.target_agent for task in tasks}
+
+
+def test_topic_message_with_paper_mention_creates_paper_dispatch_task(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, _, session_id = dispatcher_context
+    root = save_message(
+        runtime_engine,
+        **message_kwargs(session_id, "msg-1", "user", "Root request."),
+    )
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-2",
+            "assistant",
+            "Checking. @Paper Agent: summarize newest papers.",
+            agent_name="Topic Agent",
+            root_user_message_id=root.id,
+            trigger_message_id=root.id,
+            dispatch_depth=1,
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(message.id)
+
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.target_agent == "Paper Agent"
+    assert task.task_type == "dispatch"
+    assert task.instruction == "summarize newest papers."
+    assert task.root_user_message_id == root.id
+    assert task.trigger_message_id == message.id
+    assert task.dispatch_depth == 2
+
+
+def test_non_topic_assistant_message_creates_topic_review_task_with_target(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, _, session_id = dispatcher_context
+    root = save_message(
+        runtime_engine,
+        **message_kwargs(session_id, "msg-1", "user", "Root request."),
+    )
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-2",
+            "assistant",
+            "Paper answer.",
+            agent_name="Paper Agent",
+            root_user_message_id=root.id,
+            trigger_message_id=root.id,
+            dispatch_depth=3,
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(message.id)
+
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.target_agent == "Topic Agent"
+    assert task.task_type == "review"
+    assert task.target_message_id == message.id
+    assert task.trigger_message_id == message.id
+    assert task.root_user_message_id == root.id
+    assert task.dispatch_depth == 3
+
+
+def test_system_message_creates_no_task(runtime_engine, dispatcher_context):
+    dispatcher, enqueued, session_id = dispatcher_context
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(session_id, "msg-1", "system", "Do not dispatch."),
+    )
+
+    tasks = dispatcher.handle_message_saved(message.id)
+
+    assert tasks == []
+    assert enqueued == []
+
+
+def test_task_context_includes_root_trigger_and_target_chronologically(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, _, session_id = dispatcher_context
+    target = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-1",
+            "assistant",
+            "Target reply.",
+            agent_name="Paper Agent",
+            root_user_message_id="msg-3",
+            trigger_message_id="msg-2",
+            dispatch_depth=2,
+        ),
+    )
+    trigger = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-2",
+            "assistant",
+            "Trigger dispatch.",
+            agent_name="Topic Agent",
+            root_user_message_id="msg-3",
+        ),
+    )
+    root = save_message(
+        runtime_engine,
+        **message_kwargs(session_id, "msg-3", "user", "Root request."),
+    )
+
+    tasks = dispatcher.handle_message_saved(target.id)
+
+    context_ids = [item.message_id for item in tasks[0].context_snapshot]
+    assert context_ids == [target.id, trigger.id, root.id]
+
+
+def test_duplicate_handle_message_saved_does_not_enqueue_duplicate_tasks(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, enqueued, session_id = dispatcher_context
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(session_id, "msg-1", "user", "@Paper Agent find papers."),
+    )
+
+    first = dispatcher.handle_message_saved(message.id)
+    second = dispatcher.handle_message_saved(message.id)
+
+    assert len(first) == 1
+    assert second == []
+    assert len(enqueued) == 1
+
+
+def test_dispatch_depth_at_max_allowed_but_child_beyond_max_rejected(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, enqueued, session_id = dispatcher_context
+    root = save_message(
+        runtime_engine,
+        **message_kwargs(session_id, "msg-1", "user", "Root request."),
+    )
+    allowed = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-4",
+            "assistant",
+            "@Paper Agent: allowed at max depth.",
+            agent_name="Topic Agent",
+            root_user_message_id=root.id,
+            dispatch_depth=dispatcher.MAX_DISPATCH_DEPTH - 1,
+        ),
+    )
+    rejected = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-5",
+            "assistant",
+            "@Paper Agent: too deep.",
+            agent_name="Topic Agent",
+            root_user_message_id=root.id,
+            dispatch_depth=dispatcher.MAX_DISPATCH_DEPTH,
+        ),
+    )
+
+    allowed_tasks = dispatcher.handle_message_saved(allowed.id)
+    rejected_tasks = dispatcher.handle_message_saved(rejected.id)
+
+    assert len(allowed_tasks) == 1
+    assert allowed_tasks[0].dispatch_depth == dispatcher.MAX_DISPATCH_DEPTH
+    assert rejected_tasks == []
+    assert enqueued == allowed_tasks
 
 def test_find_mention_spans_returns_positions_and_duplicates(router):
     text = "@Paper Agent first, @Memory Agent second, @Paper Agent again"

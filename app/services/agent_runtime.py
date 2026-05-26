@@ -1,10 +1,13 @@
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlmodel import select
+from sqlmodel import Session, select
 
 from app.models.agent_config import AgentConfig
+from app.models.chat_message import ChatMessage
+from app.services.message_router import MessageRouter
 
 
 @dataclass
@@ -39,6 +42,255 @@ class RuntimeStatusEntry:
     instruction_summary: str
     task_id: str | None
     root_user_message_id: str | None
+
+
+class AgentDispatcher:
+    MAX_DISPATCH_DEPTH = 5
+    MAX_REDO_ROUNDS = 3
+
+    def __init__(
+        self,
+        engine,
+        enqueue_task,
+        canceled_roots=None,
+        processed_keys=None,
+    ):
+        self.engine = engine
+        self.enqueue_task = enqueue_task
+        self.canceled_roots = set(canceled_roots or set())
+        self.processed_keys = processed_keys if processed_keys is not None else set()
+
+    def handle_message_saved(self, message_id: str) -> list[AgentTask]:
+        message = self._load_message(message_id)
+        if message is None or message.role == "system":
+            return []
+
+        root_id = self._latest_root_for_message(message)
+        if message.id in self.canceled_roots or root_id in self.canceled_roots:
+            return []
+
+        if message.role == "user":
+            tasks = self._tasks_for_user_message(message, root_id)
+        elif message.role == "assistant" and message.agent_name == "Topic Agent":
+            tasks = self._tasks_for_topic_message(message, root_id)
+        elif message.role == "assistant":
+            tasks = [self._make_review_task(message, root_id)]
+        else:
+            tasks = []
+
+        enqueued: list[AgentTask] = []
+        for task in tasks:
+            if self._enqueue_once(task):
+                enqueued.append(task)
+        return enqueued
+
+    def _tasks_for_user_message(
+        self,
+        message: ChatMessage,
+        root_id: str,
+    ) -> list[AgentTask]:
+        router = self._router()
+        mentions = router.parse_mentions(message.content)
+        if not mentions:
+            topic_agent = router.resolve_agents([])[0]
+            return [
+                self._make_task(
+                    session_id=message.session_id,
+                    target_agent=topic_agent.name,
+                    task_type="user_request",
+                    instruction=message.content,
+                    root_id=root_id,
+                    trigger_id=message.id,
+                    dispatch_depth=0,
+                )
+            ]
+
+        instructions = split_mention_instructions(
+            message.content,
+            router,
+            source_agent="User",
+        )
+        return [
+            self._make_task(
+                session_id=message.session_id,
+                target_agent=agent_name,
+                task_type="user_request",
+                instruction=instructions.get(agent_name, message.content),
+                root_id=root_id,
+                trigger_id=message.id,
+                dispatch_depth=0,
+            )
+            for agent_name in mentions
+            if agent_name in instructions
+        ]
+
+    def _tasks_for_topic_message(
+        self,
+        message: ChatMessage,
+        root_id: str,
+    ) -> list[AgentTask]:
+        router = self._router()
+        instructions = split_mention_instructions(
+            message.content,
+            router,
+            source_agent="Topic Agent",
+        )
+        return [
+            self._make_task(
+                session_id=message.session_id,
+                target_agent=agent_name,
+                task_type="dispatch",
+                instruction=instruction,
+                root_id=root_id,
+                trigger_id=message.id,
+                dispatch_depth=(message.dispatch_depth or 0) + 1,
+            )
+            for agent_name, instruction in instructions.items()
+            if agent_name != "Topic Agent"
+        ]
+
+    def _make_review_task(
+        self,
+        message: ChatMessage,
+        root_id: str,
+    ) -> AgentTask:
+        router = self._router()
+        topic_agent = router.resolve_agents([])[0]
+        return self._make_task(
+            session_id=message.session_id,
+            target_agent=topic_agent.name,
+            task_type="review",
+            instruction=message.content,
+            root_id=root_id,
+            trigger_id=message.id,
+            target_id=message.id,
+            dispatch_depth=message.dispatch_depth or 0,
+            redo_count=message.redo_count or 0,
+        )
+
+    def _load_message(self, message_id: str) -> ChatMessage | None:
+        with Session(self.engine) as session:
+            return session.get(ChatMessage, message_id)
+
+    def _latest_root_for_message(self, message: ChatMessage) -> str:
+        if message.root_user_message_id:
+            return message.root_user_message_id
+        if message.role == "user":
+            return message.id
+
+        with Session(self.engine) as session:
+            root = session.exec(
+                select(ChatMessage)
+                .where(ChatMessage.session_id == message.session_id)
+                .where(ChatMessage.role == "user")
+                .where(ChatMessage.created_at <= message.created_at)
+                .order_by(ChatMessage.created_at.desc())
+            ).first()
+            return root.id if root else message.id
+
+    def _build_context_snapshot(
+        self,
+        session_id: str,
+        root_id: str,
+        trigger_id: str,
+        target_id: str | None = None,
+        limit: int = 20,
+    ) -> list[ChatContextMessage]:
+        required_ids = {root_id, trigger_id}
+        if target_id:
+            required_ids.add(target_id)
+
+        with Session(self.engine) as session:
+            recent = session.exec(
+                select(ChatMessage)
+                .where(ChatMessage.session_id == session_id)
+                .order_by(ChatMessage.created_at.desc())
+                .limit(limit)
+            ).all()
+            messages_by_id = {message.id: message for message in recent}
+
+            missing_ids = required_ids - set(messages_by_id)
+            if missing_ids:
+                required_messages = session.exec(
+                    select(ChatMessage).where(ChatMessage.id.in_(missing_ids))
+                ).all()
+                messages_by_id.update(
+                    {message.id: message for message in required_messages}
+                )
+
+            messages = sorted(
+                messages_by_id.values(),
+                key=lambda message: (message.created_at, message.id),
+            )
+            return [
+                ChatContextMessage(
+                    message_id=message.id,
+                    role=message.role,
+                    agent_name=message.agent_name,
+                    content=message.content,
+                    created_at=message.created_at,
+                )
+                for message in messages
+            ]
+
+    def _make_task(
+        self,
+        session_id: str,
+        target_agent: str,
+        task_type: str,
+        instruction: str,
+        root_id: str,
+        trigger_id: str,
+        target_id: str | None = None,
+        dispatch_depth: int = 0,
+        redo_count: int = 0,
+    ) -> AgentTask:
+        return AgentTask(
+            task_id=uuid.uuid4().hex,
+            session_id=session_id,
+            target_agent=target_agent,
+            task_type=task_type,
+            instruction=instruction,
+            root_user_message_id=root_id,
+            trigger_message_id=trigger_id,
+            target_message_id=target_id,
+            context_snapshot=self._build_context_snapshot(
+                session_id,
+                root_id,
+                trigger_id,
+                target_id=target_id,
+            ),
+            dispatch_depth=dispatch_depth,
+            redo_count=redo_count,
+        )
+
+    def _enqueue_once(self, task: AgentTask) -> bool:
+        if not self._can_enqueue_depth(task):
+            return False
+
+        key = self._processed_key(task)
+        if key in self.processed_keys:
+            return False
+
+        self.processed_keys.add(key)
+        self.enqueue_task(task)
+        return True
+
+    def _processed_key(self, task: AgentTask):
+        return (
+            task.session_id,
+            task.trigger_message_id,
+            task.task_type,
+            task.target_agent,
+            task.target_message_id,
+        )
+
+    def _can_enqueue_depth(self, task: AgentTask) -> bool:
+        return task.dispatch_depth <= self.MAX_DISPATCH_DEPTH
+
+    def _router(self) -> MessageRouter:
+        with Session(self.engine) as session:
+            return MessageRouter(session)
 
 
 @dataclass
