@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.db
+storage/research_map.db
+storage/app_memory/
+storage/pending_review/
+.venv/
+dist/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+.superpowers/
