@@ -1,5 +1,5 @@
-import { Button } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { useState } from "react";
+import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 
 interface Session { id: string; title: string; }
 
@@ -12,11 +12,34 @@ interface Props {
 }
 
 const SessionSidebar: React.FC<Props> = ({ sessions, activeId, onSelect, onCreate, onDelete }) => {
+  const [query, setQuery] = useState("");
+
+  const filtered = query.trim()
+    ? sessions.filter((s) => s.title.toLowerCase().includes(query.toLowerCase()))
+    : sessions;
+
   return (
     <div className="w-full h-full border-r border-secondary p-2 flex flex-col">
-      <Button size="small" type="primary" icon={<PlusOutlined />} onClick={onCreate} className="mb-2">新会话</Button>
+      <div className="flex items-center gap-1 mb-2">
+        <div className="flex-1 relative">
+          <SearchOutlined className="absolute left-2 top-1/2 -translate-y-1/2 text-secondary text-xs" />
+          <input
+            className="w-full pl-7 pr-2 py-1 text-sm bg-primary border border-secondary rounded text-primary placeholder:text-secondary focus:outline-none focus:border-accent"
+            placeholder="搜索会话..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <button
+          onClick={onCreate}
+          className="shrink-0 w-7 h-7 flex items-center justify-center rounded bg-accent text-white hover:opacity-80 transition-opacity"
+          title="新建会话"
+        >
+          <PlusOutlined className="text-xs" />
+        </button>
+      </div>
       <div className="flex-1 overflow-y-auto space-y-1">
-        {sessions.map((s) => {
+        {filtered.map((s) => {
           const isActive = s.id === activeId;
           return (
             <div key={s.id} className="relative">
