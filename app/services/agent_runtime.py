@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from app.models.agent_config import AgentConfig
 from app.models.chat_message import ChatMessage
+from app.services.llm import LLMService
 from app.services.message_router import MessageRouter, parse_review_card
 
 
@@ -61,7 +62,7 @@ class AgentWorker:
     def __init__(
         self,
         engine,
-        llm_caller,
+        llm_caller=None,
         canceled_roots=None,
         persistence_lock=None,
         message_saved=None,
@@ -83,20 +84,38 @@ class AgentWorker:
         user_prompt = build_agent_user_prompt(task)
 
         try:
-            content = self.llm_caller(
-                agent.name,
-                system_prompt,
-                user_prompt,
-                agent.model,
-            )
+            content = self._call_llm(agent, system_prompt, user_prompt)
         except Exception as exc:
-            self._save_message(task, role="system", content=f"Agent execution failed: {exc}")
+            if self._is_canceled(task):
+                return None
+            self._save_message(
+                task,
+                role="system",
+                content=f"Agent execution failed: {exc}",
+            )
             return None
 
         if self._is_canceled(task):
             return None
 
         return self._save_message(task, role="assistant", content=content)
+
+    def _call_llm(self, agent, system_prompt: str, user_prompt: str) -> str:
+        if self.llm_caller is not None:
+            return self.llm_caller(
+                agent.name,
+                system_prompt,
+                user_prompt,
+                agent.model,
+            )
+
+        service = LLMService()
+        if agent.model:
+            service.model = agent.model
+        return service.call_simple(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
 
     def _is_canceled(self, task: AgentTask) -> bool:
         if task.root_user_message_id in self.canceled_roots:
@@ -121,9 +140,11 @@ class AgentWorker:
             router = MessageRouter(session)
             return router.build_system_prompt(agent)
 
-    def _save_message(self, task: AgentTask, role: str, content: str) -> str:
+    def _save_message(self, task: AgentTask, role: str, content: str) -> str | None:
         lock = self.persistence_lock if self.persistence_lock is not None else nullcontext()
         with lock:
+            if self._is_canceled(task):
+                return None
             with Session(self.engine) as session:
                 message = ChatMessage(
                     session_id=task.session_id,

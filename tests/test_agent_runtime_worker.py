@@ -245,6 +245,68 @@ def test_normal_llm_exception_writes_system_message_and_emits_saved_callback(
     assert saved == [(runtime_session_id, message.id)]
 
 
+def test_failing_llm_canceled_before_exception_save_writes_nothing(
+    runtime_engine,
+    runtime_session_id,
+):
+    canceled_roots = set()
+    saved = []
+
+    def failing_llm(*_args):
+        canceled_roots.add("msg-1")
+        raise RuntimeError("provider unavailable")
+
+    task = make_task(runtime_session_id)
+    worker = agent_runtime.AgentWorker(
+        runtime_engine,
+        failing_llm,
+        canceled_roots=canceled_roots,
+        message_saved=saved.append,
+    )
+
+    result = worker.process_one(task)
+
+    assert result is None
+    assert saved == []
+    assert load_messages(runtime_engine) == []
+
+
+def test_worker_without_injected_llm_uses_llm_service_fallback(
+    monkeypatch,
+    runtime_engine,
+    runtime_session_id,
+):
+    calls = []
+    saved = []
+
+    class FakeLLMService:
+        def __init__(self):
+            self.model = "default-model"
+
+        def call_simple(self, system_prompt, user_prompt):
+            calls.append((self.model, system_prompt, user_prompt))
+            return "Fallback answer"
+
+    monkeypatch.setattr(agent_runtime, "LLMService", FakeLLMService)
+
+    task = make_task(runtime_session_id)
+    worker = agent_runtime.AgentWorker(runtime_engine, message_saved=saved.append)
+
+    message_id = worker.process_one(task)
+
+    assert message_id is not None
+    messages = load_messages(runtime_engine)
+    assert len(messages) == 1
+    assert messages[0].role == "assistant"
+    assert messages[0].content == "Fallback answer"
+    assert messages[0].agent_name == "Paper Agent"
+    assert saved == [(runtime_session_id, message_id)]
+    assert len(calls) == 1
+    assert calls[0][0] == "paper-model"
+    assert "Paper prompt" in calls[0][1]
+    assert "请检索相关论文。" in calls[0][2]
+
+
 def test_failed_topic_review_writes_system_message_without_updating_target_status(
     runtime_engine,
     runtime_session_id,
