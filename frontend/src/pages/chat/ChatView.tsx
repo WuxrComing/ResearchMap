@@ -105,7 +105,7 @@ const ChatView: React.FC<{ sessionId: string }> = ({ sessionId }) => {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full overflow-hidden">
       {contextHolder}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto scroll p-4 space-y-3">
         {hasMore && <div className="text-center text-secondary text-xs py-2">向上滚动加载更多...</div>}

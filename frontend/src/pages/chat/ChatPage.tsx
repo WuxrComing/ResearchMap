@@ -76,16 +76,16 @@ const ChatPage: React.FC = () => {
   if (!workspaceId) return null;
 
   return (
-    <div className="flex h-full">
-      <div style={{ width: sessionWidth }} className="shrink-0 h-full">
+    <div className="flex h-full overflow-hidden">
+      <div style={{ width: sessionWidth }} className="shrink-0 h-full overflow-hidden">
         <SessionSidebar sessions={sessions} activeId={activeId} onSelect={setActiveId} onCreate={handleCreateSession}
           onDelete={async (id) => { await api.deleteSession(id); await fetchSessions(); }} />
       </div>
 
       <ResizeHandle onResize={handleSessionResize} />
 
-      <div className="flex-1 flex min-w-0 h-full">
-        <div className="flex-1 min-w-0 h-full">
+      <div className="flex-1 flex min-w-0 h-full overflow-hidden">
+        <div className="flex-1 min-w-0 h-full overflow-hidden">
           {activeId ? <ChatView sessionId={activeId} /> :
             <div className="flex items-center justify-center h-full text-secondary">选择或创建一个会话</div>}
         </div>
@@ -93,7 +93,7 @@ const ChatPage: React.FC = () => {
         {mindmapVisible && workspaceId && (
           <>
             <ResizeHandle onResize={handleMindmapResize} />
-            <div style={{ width: mindmapWidth }} className="shrink-0 border-l border-secondary relative h-full">
+            <div style={{ width: mindmapWidth }} className="shrink-0 border-l border-secondary relative h-full overflow-hidden">
               <MindMapPanel workspaceId={workspaceId} />
               <button className="absolute top-2 right-2 p-1 rounded hover:bg-secondary text-secondary z-10" onClick={() => setMindmapVisible(false)}>◀</button>
             </div>

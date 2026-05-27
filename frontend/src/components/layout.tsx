@@ -95,7 +95,7 @@ const AppLayout = () => {
                 : theme.defaultAlgorithm,
           }}
         >
-          <main className="flex-1 p-2 text-primary">
+          <main className="flex-1 p-2 text-primary overflow-hidden">
             <Routes>
               <Route path="/" element={<WorkspacePage />} />
               <Route path="/workspaces" element={<WorkspacePage />} />
