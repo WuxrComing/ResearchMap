@@ -51,7 +51,7 @@ const MindMapPanel: React.FC<{ workspaceId: string }> = ({ workspaceId }) => {
     walk(roots, 0);
   };
 
-  return <div ref={containerRef} className="h-full overflow-y-auto p-2 text-sm" />;
+  return <div ref={containerRef} className="h-full overflow-y-auto scroll p-2 text-sm" />;
 };
 
 export default MindMapPanel;
