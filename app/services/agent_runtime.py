@@ -185,6 +185,8 @@ class AgentDispatcher:
         review = parse_review_card(message.content)
         if review is None or not message.target_message_id:
             return []
+        if self._review_message_processed(message):
+            return []
 
         with Session(self.engine) as session:
             target = session.get(ChatMessage, message.target_message_id)
@@ -205,7 +207,11 @@ class AgentDispatcher:
             )
 
         if review.action == "accept":
-            self._persist_review_result(message.target_message_id, review)
+            self._persist_review_result(
+                message.target_message_id,
+                review,
+                review_message_id=message.id,
+            )
             return []
         elif review.action == "redo":
             task_redo_count = redo_count if redo_exhausted else redo_count + 1
@@ -229,23 +235,43 @@ class AgentDispatcher:
         else:
             tasks = []
 
-        enqueued: list[AgentTask] = []
-        for task in tasks:
-            if self._enqueue_once(task):
-                enqueued.append(task)
-        if enqueued:
+        def persist_review_result():
             self._persist_review_result(
                 target_id,
                 review,
                 redo_count=task_redo_count if review.action == "redo" else None,
+                review_message_id=message.id,
             )
-        return enqueued
+
+        return self._enqueue_review_tasks(tasks, persist_review_result)
+
+    def _review_message_processed(self, message: ChatMessage) -> bool:
+        return message.review_status == "processed"
+
+    def _enqueue_review_tasks(
+        self,
+        tasks: list[AgentTask],
+        persist_result,
+    ) -> list[AgentTask]:
+        enqueued: list[AgentTask] = []
+        try:
+            for task in tasks:
+                if self._enqueue_once(task):
+                    enqueued.append(task)
+            if enqueued:
+                persist_result()
+            return enqueued
+        except Exception:
+            for task in enqueued:
+                self.processed_keys.discard(self._processed_key(task))
+            raise
 
     def _persist_review_result(
         self,
         target_id: str,
         review,
         redo_count: int | None = None,
+        review_message_id: str | None = None,
     ) -> None:
         with Session(self.engine) as session:
             target = session.get(ChatMessage, target_id)
@@ -259,6 +285,13 @@ class AgentDispatcher:
                 target.redo_count = redo_count
 
             session.add(target)
+            if review_message_id:
+                review_message = session.get(ChatMessage, review_message_id)
+                if review_message:
+                    review_message.review_status = "processed"
+                    review_message.review_score = review.score
+                    review_message.review_summary = review.summary
+                    session.add(review_message)
             session.commit()
 
     def _review_status_for_action(self, review) -> str:

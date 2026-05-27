@@ -469,6 +469,41 @@ def test_topic_review_redo_processed_twice_increments_redo_count_once(
     assert updated.redo_count == 1
 
 
+def test_topic_review_redo_processed_by_new_dispatcher_does_not_repeat(
+    runtime_engine,
+    runtime_db_session,
+    runtime_session_id,
+):
+    first_enqueued = []
+    first_dispatcher = AgentDispatcher(runtime_engine, first_enqueued.append)
+    root, target = create_review_target(runtime_engine, runtime_session_id, redo_count=0)
+    review = save_message(
+        runtime_engine,
+        **message_kwargs(
+            runtime_session_id,
+            "msg-3",
+            "assistant",
+            review_card("Needs another pass.", "fail", 2, "redo"),
+            agent_name="Topic Agent",
+            task_type="review",
+            root_user_message_id=root.id,
+            target_message_id=target.id,
+        ),
+    )
+
+    first_tasks = first_dispatcher.handle_message_saved(review.id)
+
+    second_enqueued = []
+    second_dispatcher = AgentDispatcher(runtime_engine, second_enqueued.append)
+    second_tasks = second_dispatcher.handle_message_saved(review.id)
+
+    assert len(first_tasks) == 1
+    assert second_tasks == []
+    assert second_enqueued == []
+    updated = load_message(runtime_engine, target.id)
+    assert updated.redo_count == 1
+
+
 def test_topic_review_redo_enqueue_failure_does_not_increment_redo_count_and_retry_enqueues(
     runtime_engine,
     runtime_session_id,
@@ -512,6 +547,58 @@ def test_topic_review_redo_enqueue_failure_does_not_increment_redo_count_and_ret
     assert len(enqueued) == 1
     after_retry = load_message(runtime_engine, target.id)
     assert after_retry.redo_count == 1
+
+
+def test_topic_review_redo_persistence_failure_rolls_back_processed_key_for_retry(
+    runtime_engine,
+    runtime_db_session,
+    runtime_session_id,
+    monkeypatch,
+):
+    enqueued = []
+    dispatcher = AgentDispatcher(runtime_engine, enqueued.append)
+    original_persist = dispatcher._persist_review_result
+    should_raise = True
+
+    def persist_review_result(*args, **kwargs):
+        nonlocal should_raise
+        if should_raise:
+            should_raise = False
+            raise RuntimeError("persist failed")
+        return original_persist(*args, **kwargs)
+
+    monkeypatch.setattr(dispatcher, "_persist_review_result", persist_review_result)
+    root, target = create_review_target(runtime_engine, runtime_session_id, redo_count=0)
+    review = save_message(
+        runtime_engine,
+        **message_kwargs(
+            runtime_session_id,
+            "msg-3",
+            "assistant",
+            review_card("Needs another pass.", "fail", 2, "redo"),
+            agent_name="Topic Agent",
+            task_type="review",
+            root_user_message_id=root.id,
+            target_message_id=target.id,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="persist failed"):
+        dispatcher.handle_message_saved(review.id)
+
+    after_failure = load_message(runtime_engine, target.id)
+    assert after_failure.redo_count == 0
+    assert after_failure.review_status is None
+
+    retry_tasks = dispatcher.handle_message_saved(review.id)
+
+    assert len(retry_tasks) == 1
+    assert len(enqueued) == 2
+    after_retry = load_message(runtime_engine, target.id)
+    assert after_retry.redo_count == 1
+    assert after_retry.review_status == "failed"
+    assert after_retry.review_score == 2
+    assert after_retry.review_summary == "Needs another pass."
 
 
 def test_topic_review_redo_at_max_rounds_creates_topic_fallback_task(
