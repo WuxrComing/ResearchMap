@@ -99,7 +99,7 @@ const ChatPage: React.FC = () => {
   if (!workspaceId) return null;
 
   return (
-    <div className="flex h-[calc(100vh-120px)]">
+    <div className="flex h-full">
       {/* Session list */}
       <div style={{ width: sessionWidth }} className="shrink-0">
         <SessionSidebar
