@@ -1,4 +1,5 @@
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface Props {
   message: { id: string; role: string; content: string; agent_name: string | null; review_status: string | null; };
@@ -111,12 +112,12 @@ const MessageBubble: React.FC<Props> = ({ message }) => {
         >
           {reviewData ? (
             <>
-              {reviewData.before && <ReactMarkdown>{reviewData.before}</ReactMarkdown>}
+              {reviewData.before && <ReactMarkdown remarkPlugins={[remarkGfm]}>{reviewData.before}</ReactMarkdown>}
               <ReviewCardView review={reviewData.review} />
-              {reviewData.after && <ReactMarkdown>{reviewData.after}</ReactMarkdown>}
+              {reviewData.after && <ReactMarkdown remarkPlugins={[remarkGfm]}>{reviewData.after}</ReactMarkdown>}
             </>
           ) : (
-            <ReactMarkdown>{content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
           )}
         </div>
       </div>
