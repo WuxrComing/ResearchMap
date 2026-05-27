@@ -64,6 +64,8 @@ class AgentDispatcher:
         message = self._load_message(message_id)
         if message is None or message.role == "system":
             return []
+        if message.role == "assistant" and message.task_type == "review":
+            return []
 
         root_id = self._latest_root_for_message(message)
         if message.id in self.canceled_roots or root_id in self.canceled_roots:
@@ -72,8 +74,6 @@ class AgentDispatcher:
         if message.role == "user":
             tasks = self._tasks_for_user_message(message, root_id)
         elif message.role == "assistant" and message.agent_name == "Topic Agent":
-            if message.task_type == "review":
-                return []
             tasks = self._tasks_for_topic_message(message, root_id)
         elif message.role == "assistant":
             tasks = [self._make_review_task(message, root_id)]

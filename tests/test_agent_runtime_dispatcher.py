@@ -309,6 +309,34 @@ def test_topic_review_message_creates_no_dispatch_task(
     assert enqueued == []
 
 
+def test_non_topic_review_message_creates_no_review_task(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, enqueued, session_id = dispatcher_context
+    root = save_message(
+        runtime_engine,
+        **message_kwargs(session_id, "msg-1", "user", "Root request."),
+    )
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-2",
+            "assistant",
+            "Review recursion should stop.",
+            agent_name="Paper Agent",
+            root_user_message_id=root.id,
+            task_type="review",
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(message.id)
+
+    assert tasks == []
+    assert enqueued == []
+
+
 def test_system_message_creates_no_task(runtime_engine, dispatcher_context):
     dispatcher, enqueued, session_id = dispatcher_context
     message = save_message(
