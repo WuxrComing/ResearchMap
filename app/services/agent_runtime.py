@@ -1,5 +1,6 @@
 import re
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -42,6 +43,116 @@ class RuntimeStatusEntry:
     instruction_summary: str
     task_id: str | None
     root_user_message_id: str | None
+
+
+def build_agent_user_prompt(task: AgentTask) -> str:
+    lines = ["以下是当前群聊上下文，按时间顺序排列：", ""]
+    for msg in task.context_snapshot:
+        speaker = "User" if msg.role == "user" else (msg.agent_name or msg.role)
+        lines.append(f"{speaker}:")
+        lines.append(msg.content)
+        lines.append("")
+    lines.append("你的任务：")
+    lines.append(task.instruction)
+    return "\n".join(lines).strip()
+
+
+class AgentWorker:
+    def __init__(
+        self,
+        engine,
+        llm_caller,
+        canceled_roots=None,
+        persistence_lock=None,
+        message_saved=None,
+        is_canceled=None,
+    ):
+        self.engine = engine
+        self.llm_caller = llm_caller
+        self.canceled_roots = canceled_roots if canceled_roots is not None else set()
+        self.persistence_lock = persistence_lock
+        self.message_saved = message_saved
+        self.is_canceled = is_canceled
+
+    def process_one(self, task: AgentTask) -> str | None:
+        if self._is_canceled(task):
+            return None
+
+        agent = self._resolve_agent(task.target_agent)
+        system_prompt = self._build_system_prompt(agent)
+        user_prompt = build_agent_user_prompt(task)
+
+        try:
+            content = self.llm_caller(
+                agent.name,
+                system_prompt,
+                user_prompt,
+                agent.model,
+            )
+        except Exception as exc:
+            self._save_message(task, role="system", content=f"Agent execution failed: {exc}")
+            return None
+
+        if self._is_canceled(task):
+            return None
+
+        return self._save_message(task, role="assistant", content=content)
+
+    def _is_canceled(self, task: AgentTask) -> bool:
+        if task.root_user_message_id in self.canceled_roots:
+            return True
+        if task.task_id in self.canceled_roots:
+            return True
+        if self.is_canceled is not None:
+            return bool(self.is_canceled(task))
+        return False
+
+    def _resolve_agent(self, agent_name: str):
+        with Session(self.engine) as session:
+            router = MessageRouter(session)
+            agents = router.resolve_agents([agent_name])
+            for agent in agents:
+                if agent.name == agent_name:
+                    return agent
+            return agents[0]
+
+    def _build_system_prompt(self, agent) -> str:
+        with Session(self.engine) as session:
+            router = MessageRouter(session)
+            return router.build_system_prompt(agent)
+
+    def _save_message(self, task: AgentTask, role: str, content: str) -> str:
+        lock = self.persistence_lock if self.persistence_lock is not None else nullcontext()
+        with lock:
+            with Session(self.engine) as session:
+                message = ChatMessage(
+                    session_id=task.session_id,
+                    role=role,
+                    content=content,
+                    agent_name=task.target_agent,
+                    task_id=task.task_id,
+                    task_type=task.task_type,
+                    root_user_message_id=task.root_user_message_id,
+                    trigger_message_id=task.trigger_message_id,
+                    target_message_id=task.target_message_id,
+                    dispatch_depth=task.dispatch_depth,
+                    redo_count=task.redo_count,
+                )
+                session.add(message)
+                session.commit()
+                session.refresh(message)
+                message_id = message.id
+
+        self._emit_message_saved(task.session_id, message_id)
+        return message_id
+
+    def _emit_message_saved(self, session_id: str, message_id: str) -> None:
+        if self.message_saved is None:
+            return
+        try:
+            self.message_saved(session_id, message_id)
+        except TypeError:
+            self.message_saved((session_id, message_id))
 
 
 class AgentDispatcher:
