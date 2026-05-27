@@ -1,7 +1,8 @@
 # ResearchMap Web UI Migration Design
 
 **Date**: 2026-05-27
-**Status**: Draft
+**Status**: Approved
+**Reference**: `ref/autogen-main` — all UI design, colors, spacing, and reusable components sourced from here. Future designs must follow this visual style.
 
 ## 1. Overview
 
