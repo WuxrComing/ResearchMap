@@ -11,6 +11,7 @@ const classNames = (...classes: (string | undefined | boolean)[]) => classes.fil
 type SidebarProps = { link: string; meta?: { title: string; description: string }; isMobile: boolean };
 
 const Sidebar = ({ link: _link, meta, isMobile }: SidebarProps) => {
+  const sidebarWidth = useConfigStore((s) => s.sidebarWidth);
   const { sidebar, setHeader, setSidebarState } = useConfigStore();
   const { workspaces, setWorkspaces } = useWorkspaceStore();
   const { isExpanded } = sidebar;
@@ -54,10 +55,11 @@ const Sidebar = ({ link: _link, meta, isMobile }: SidebarProps) => {
 
   return (
     <div className={classNames(
-      "flex grow z-50 flex-col gap-y-5 overflow-y-auto overflow-x-hidden border-r border-secondary bg-primary",
-      "transition-all duration-300 ease-in-out",
-      showFull ? "w-72 px-6" : "w-16 px-2"
-    )}>
+      "flex grow z-50 flex-col gap-y-5 overflow-y-auto overflow-x-hidden border-r border-secondary bg-primary h-full",
+      "transition-all duration-300 ease-in-out"
+    )}
+    style={{ width: showFull ? sidebarWidth : 64, paddingLeft: showFull ? 24 : 8, paddingRight: showFull ? 24 : 8 }}
+    >
       {/* Logo */}
       <div className={`flex h-16 items-center ${showFull ? "gap-x-3" : "ml-2"}`}>
         <Link to="/" className="w-8 text-right text-accent hover:opacity-80 transition-opacity">
