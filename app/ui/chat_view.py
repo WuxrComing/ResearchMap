@@ -450,7 +450,7 @@ class ChatView(QWidget):
 
         self._session_id = None
         self._workspace_id = None
-        self._status_widgets: dict = {}        # db_msg_id -> _StatusWidget
+        self._status_widget: _StatusWidget | None = None
 
         # Session agent runtime replaces old serial pipeline
         engine = get_engine()
@@ -509,6 +509,7 @@ class ChatView(QWidget):
                 self._show_empty()
 
     def _refresh(self):
+        self._status_widget = None
         while self.msg_layout.count():
             item = self.msg_layout.takeAt(0)
             if item.widget():
@@ -580,6 +581,10 @@ class ChatView(QWidget):
         self._runtime_manager.submit_message(sid, db_msg_id)
         self._runtime_manager.start_draining(sid)
 
+        # Show thinking status below the user message
+        rt = self._runtime_manager.get_runtime(sid)
+        self._update_thinking_status(rt, db_msg_id)
+
     def shutdown_workers(self):
         """Shut down the runtime manager. Call on app exit."""
         self._runtime_manager.shutdown()
@@ -587,19 +592,55 @@ class ChatView(QWidget):
     def _on_runtime_message_saved(self, session_id: str, message_id: str):
         """Refresh when the runtime saves a new agent message."""
         if session_id == self._session_id:
+            # Preserve status widget across refresh
+            sw = self._status_widget
+            if sw is not None:
+                sw.setParent(None)
             self._refresh()
+            if sw is not None and self._status_widget is None:
+                self._status_widget = sw
+                self.msg_layout.insertWidget(self.msg_layout.count() - 1, sw)
 
     def _on_runtime_status_changed(self, session_id: str, entries: list):
         """Update status display from runtime status entries."""
         if session_id != self._session_id:
             return
-        # First version: simple status — full widget integration is a follow-up
+
         if not entries:
+            self._clear_status_widget()
             return
-        # Update existing status widget or show runtime activity
-        active_entries = [e for e in entries if e.state in ("running", "queued")]
-        if active_entries:
-            names = [e.agent_name for e in active_entries]
-            self._last_status_names = names
-        elif hasattr(self, "_last_status_names"):
-            del self._last_status_names
+
+        names = [e.agent_name for e in entries]
+        states = [e.state for e in entries]
+
+        if self._status_widget is not None:
+            self._status_widget.update_status("thinking", names)
+        else:
+            self._status_widget = _StatusWidget(names, "thinking")
+            self._status_widget.cancel_clicked.connect(self._cancel_current_request)
+            self.msg_layout.insertWidget(self.msg_layout.count() - 1, self._status_widget)
+
+    def _update_thinking_status(self, rt, db_msg_id: str):
+        """Show initial thinking status based on enqueued tasks in the runtime."""
+        entries = rt._build_status_entries()
+        if entries:
+            names = [e.agent_name for e in entries]
+        else:
+            names = ["Agent"]
+        if self._status_widget is not None:
+            self._status_widget.update_status("thinking", names)
+        else:
+            self._status_widget = _StatusWidget(names, "thinking")
+            self._status_widget.cancel_clicked.connect(self._cancel_current_request)
+            self.msg_layout.insertWidget(self.msg_layout.count() - 1, self._status_widget)
+
+    def _clear_status_widget(self):
+        if self._status_widget is not None:
+            self._status_widget.deleteLater()
+            self._status_widget = None
+
+    def _cancel_current_request(self):
+        """Cancel the current root request chain."""
+        if self._status_widget is not None:
+            self._status_widget.update_status("done", self._status_widget._agent_names)
+        # TODO: track root message ids and cancel through runtime manager

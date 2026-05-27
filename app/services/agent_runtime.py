@@ -841,6 +841,7 @@ class _RuntimeWorkerThread(QThread):
 
             worker = self._runtime._ensure_worker(self._agent_name)
             self._runtime._active_workers_count += 1
+            self._runtime._emit_status()
             try:
                 message_id = worker.process_one(task)
             finally:
@@ -852,6 +853,7 @@ class _RuntimeWorkerThread(QThread):
 
         self._runtime.queues.pop(self._agent_name, None)
         self._runtime._threads.pop(self._agent_name, None)
+        self._runtime._emit_status()
 
 
 class SessionRuntime:
@@ -890,6 +892,7 @@ class SessionRuntime:
             return
         queue = self.queues.setdefault(task.target_agent, deque())
         queue.append(task)
+        self._emit_status()
 
     def _ensure_worker(self, agent_name: str) -> AgentWorker:
         if agent_name not in self.workers:
@@ -916,6 +919,39 @@ class SessionRuntime:
             thread = _RuntimeWorkerThread(self, agent_name)
             self._threads[agent_name] = thread
             thread.start()
+
+    def _emit_status(self) -> None:
+        if self._draining_sync:
+            return
+        entries = self._build_status_entries()
+        if self.status_changed_signal is not None:
+            try:
+                self.status_changed_signal.emit(self.session_id, entries)
+            except AttributeError:
+                try:
+                    self.status_changed_signal(self.session_id, entries)
+                except (TypeError, RuntimeError):
+                    pass
+
+    def _build_status_entries(self) -> list[RuntimeStatusEntry]:
+        entries: list[RuntimeStatusEntry] = []
+        for agent_name, queue in self.queues.items():
+            if not queue:
+                continue
+            task = queue[0]
+            state = "running" if (
+                agent_name in self._threads
+                and self._threads[agent_name].isRunning()
+            ) else "queued"
+            entries.append(RuntimeStatusEntry(
+                agent_name=agent_name,
+                state=state,
+                task_type=task.task_type,
+                instruction_summary=task.instruction[:50],
+                task_id=task.task_id,
+                root_user_message_id=task.root_user_message_id,
+            ))
+        return entries
 
     def _on_worker_message_saved(self, session_id: str, message_id: str) -> None:
         if self.message_saved_signal is not None:
