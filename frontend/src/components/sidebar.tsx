@@ -54,7 +54,7 @@ const Sidebar = ({ link: _link, meta, isMobile }: SidebarProps) => {
 
   return (
     <div className={classNames(
-      "flex grow z-50 flex-col gap-y-5 overflow-y-auto border-r border-secondary bg-primary",
+      "flex grow z-50 flex-col gap-y-5 overflow-y-auto overflow-x-hidden border-r border-secondary bg-primary",
       "transition-all duration-300 ease-in-out",
       showFull ? "w-72 px-6" : "w-16 px-2"
     )}>
@@ -73,8 +73,8 @@ const Sidebar = ({ link: _link, meta, isMobile }: SidebarProps) => {
 
       {/* Workspace list with search */}
       {showFull ? (
-        <div className="flex-1 -mx-2 flex flex-col min-h-0">
-          <div className="flex items-center gap-1 px-2 mb-2">
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="flex items-center gap-1 mb-2">
             <div className="flex-1 relative">
               <SearchOutlined className="absolute left-2 top-1/2 -translate-y-1/2 text-secondary text-xs" />
               <input
@@ -92,7 +92,7 @@ const Sidebar = ({ link: _link, meta, isMobile }: SidebarProps) => {
               <PlusOutlined className="text-xs" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto space-y-0.5">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden space-y-0.5">
             {filtered.map((w) => {
               const isActive = w.id === currentWorkspaceId;
               return (
@@ -100,7 +100,7 @@ const Sidebar = ({ link: _link, meta, isMobile }: SidebarProps) => {
                   {isActive && <div className="bg-accent absolute top-1 left-0.5 z-50 h-8 w-1 bg-opacity-80 rounded" />}
                   <button onClick={() => handleWorkspaceClick(w.id, w.title)}
                     className={classNames(
-                      "w-full text-left ml-1 flex gap-x-3 rounded-md mr-2 p-2 text-sm font-medium",
+                      "w-full text-left flex gap-x-2 rounded-md p-2 text-sm font-medium",
                       isActive ? "bg-secondary text-primary" : "text-secondary hover:bg-tertiary hover:text-accent"
                     )}>
                     <span className="w-6 h-6 shrink-0 rounded flex items-center justify-center text-white text-xs font-bold"
