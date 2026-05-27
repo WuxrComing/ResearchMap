@@ -1,9 +1,11 @@
 import re
 import uuid
+from collections import deque
 from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
+from PyQt6.QtCore import QObject, pyqtSignal
 from sqlmodel import Session, select
 
 from app.models.agent_config import AgentConfig
@@ -171,9 +173,12 @@ class AgentWorker:
         if self.message_saved is None:
             return
         try:
-            self.message_saved(session_id, message_id)
-        except TypeError:
-            self.message_saved((session_id, message_id))
+            self.message_saved.emit(session_id, message_id)
+        except AttributeError:
+            try:
+                self.message_saved(session_id, message_id)
+            except (TypeError, RuntimeError):
+                self.message_saved((session_id, message_id))
 
 
 class AgentDispatcher:
@@ -811,3 +816,165 @@ def _find_generic_agent_mention_spans(text: str) -> list[MentionSpan]:
     ]
     spans.sort(key=lambda span: span.start)
     return spans
+
+
+class SessionRuntime:
+    def __init__(
+        self,
+        session_id: str,
+        engine,
+        llm_caller=None,
+        persistence_lock=None,
+        message_saved_signal=None,
+        status_changed_signal=None,
+    ):
+        self.session_id = session_id
+        self.engine = engine
+        self.llm_caller = llm_caller
+        self.persistence_lock = persistence_lock
+        self.message_saved_signal = message_saved_signal
+        self.status_changed_signal = status_changed_signal
+        self.queues: dict[str, deque[AgentTask]] = {}
+        self.workers: dict[str, AgentWorker] = {}
+        self.processed_keys: set[tuple] = set()
+        self.canceled_roots: set[str] = set()
+        self._closed = False
+        self._active_workers_count = 0
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def _enqueue_task(self, task: AgentTask) -> None:
+        if self._closed:
+            return
+        if task.root_user_message_id in self.canceled_roots:
+            return
+        queue = self.queues.setdefault(task.target_agent, deque())
+        queue.append(task)
+
+    def _ensure_worker(self, agent_name: str) -> AgentWorker:
+        if agent_name not in self.workers:
+            worker = AgentWorker(
+                self.engine,
+                llm_caller=self.llm_caller,
+                canceled_roots=self.canceled_roots,
+                persistence_lock=self.persistence_lock,
+                message_saved=self._on_worker_message_saved,
+            )
+            self.workers[agent_name] = worker
+        return self.workers[agent_name]
+
+    def _on_worker_message_saved(self, session_id: str, message_id: str) -> None:
+        if self.message_saved_signal is not None:
+            try:
+                self.message_saved_signal.emit(session_id, message_id)
+            except AttributeError:
+                try:
+                    self.message_saved_signal(session_id, message_id)
+                except (TypeError, RuntimeError):
+                    self.message_saved_signal((session_id, message_id))
+
+    def _get_or_create_dispatcher(self) -> AgentDispatcher:
+        return AgentDispatcher(
+            self.engine,
+            enqueue_task=self._enqueue_task,
+            canceled_roots=self.canceled_roots,
+            processed_keys=self.processed_keys,
+        )
+
+    def on_message_saved(self, message_id: str) -> None:
+        if self._closed:
+            return
+        dispatcher = self._get_or_create_dispatcher()
+        tasks = dispatcher.handle_message_saved(message_id)
+        for task in tasks:
+            self._ensure_worker(task.target_agent)
+
+    def _drain_one(self) -> bool:
+        """Process one task from any agent queue. Returns True if a task was processed."""
+        for agent_name, queue in list(self.queues.items()):
+            if not queue:
+                continue
+            task = queue.popleft()
+            if not queue:
+                del self.queues[agent_name]
+
+            if task.root_user_message_id in self.canceled_roots:
+                return True
+
+            worker = self._ensure_worker(agent_name)
+            self._active_workers_count += 1
+            try:
+                message_id = worker.process_one(task)
+            finally:
+                self._active_workers_count -= 1
+
+            if message_id is not None:
+                self.on_message_saved(message_id)
+            return True
+        return False
+
+    def drain_for_tests(self, max_steps: int = 50) -> None:
+        """Process all queued tasks synchronously. For tests only."""
+        for _ in range(max_steps):
+            if not self._drain_one():
+                break
+
+    def cancel_root(self, root_user_message_id: str) -> None:
+        self.canceled_roots.add(root_user_message_id)
+        for queue in self.queues.values():
+            to_remove = [
+                t for t in queue
+                if t.root_user_message_id == root_user_message_id
+            ]
+            for task in to_remove:
+                queue.remove(task)
+
+    def close(self, reason: str = "") -> None:
+        self._closed = True
+        self.queues.clear()
+
+    @property
+    def has_pending_tasks(self) -> bool:
+        return any(len(q) > 0 for q in self.queues.values()) or self._active_workers_count > 0
+
+
+class SessionRuntimeManager(QObject):
+    message_saved = pyqtSignal(str, str)
+    status_changed = pyqtSignal(str, list)
+    error = pyqtSignal(str, str)
+
+    def __init__(self, engine=None, llm_caller=None, parent=None):
+        super().__init__(parent)
+        self.engine = engine
+        self.llm_caller = llm_caller
+        self._runtimes: dict[str, SessionRuntime] = {}
+        self._persistence_lock = None
+
+    def get_runtime(self, session_id: str) -> SessionRuntime:
+        if session_id not in self._runtimes:
+            self._runtimes[session_id] = SessionRuntime(
+                session_id=session_id,
+                engine=self.engine,
+                llm_caller=self.llm_caller,
+                persistence_lock=self._persistence_lock,
+                message_saved_signal=self.message_saved,
+                status_changed_signal=self.status_changed,
+            )
+        return self._runtimes[session_id]
+
+    def submit_message(self, session_id: str, message_id: str) -> None:
+        rt = self.get_runtime(session_id)
+        rt.on_message_saved(message_id)
+
+    def cancel_root(self, session_id: str, root_user_message_id: str) -> None:
+        # Ensure the runtime exists so cancellation is recorded even before the
+        # first submit_message call.
+        rt = self.get_runtime(session_id)
+        rt.cancel_root(root_user_message_id)
+
+    def shutdown(self) -> None:
+        for rt in list(self._runtimes.values()):
+            rt.close(reason="shutdown")
+        self._runtimes.clear()
