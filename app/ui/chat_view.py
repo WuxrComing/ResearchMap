@@ -1,7 +1,6 @@
 import math
 import re
 import uuid
-from collections import deque
 import html as _html
 import markdown2
 from PyQt6.QtWidgets import (
@@ -14,7 +13,7 @@ from sqlmodel import Session, select
 from app.services.storage import get_engine
 from app.models.chat_message import ChatMessage
 from app.models.session import Session as SessionModel
-from app.ui.worker import SessionWorker, QueuedMessage
+from app.services.agent_runtime import SessionRuntimeManager
 from app.models.agent_config import AgentConfig
 
 CHAT_BG = "#FFFFFF"
@@ -383,19 +382,6 @@ class ChatView(QWidget):
         title.setStyleSheet(f"font-weight:bold;font-size:14px;color:{TEXT_PRIMARY};")
         hl.addWidget(title)
 
-        # Auto-collaboration toggle
-        self._collab_toggle = QPushButton("协作: 关")
-        self._collab_toggle.setCheckable(True)
-        self._collab_toggle.setFixedHeight(24)
-        self._collab_toggle.setStyleSheet(
-            "QPushButton { background:#F0F0F0; color:#666666; border:1px solid #D0D0D0; "
-            "border-radius:4px; padding:2px 10px; font-size:11px; }"
-            "QPushButton:checked { background:#07C160; color:#000000; border-color:#07C160; }"
-            "QPushButton:hover { border-color:#B0B0B0; }"
-        )
-        self._collab_toggle.clicked.connect(self._on_collab_toggled)
-        hl.addWidget(self._collab_toggle)
-
         hl.addStretch()
         self.collapse_btn = QPushButton("◀")
         self.collapse_btn.setFixedSize(28, 28)
@@ -464,13 +450,14 @@ class ChatView(QWidget):
 
         self._session_id = None
         self._workspace_id = None
-        self._auto_collab_enabled = False
-        self._auto_collab_round = 0
-        self._called_agents: set = set()
-        self._active_workers: list = []  # keep references to prevent GC
-        self._session_queues: dict = {}        # session_id -> deque[QueuedMessage]
-        self._session_worker_busy: dict = {}   # session_id -> bool
         self._status_widgets: dict = {}        # db_msg_id -> _StatusWidget
+
+        # Session agent runtime replaces old serial pipeline
+        engine = get_engine()
+        self._runtime_manager = SessionRuntimeManager(engine=engine)
+        self._runtime_manager.message_saved.connect(self._on_runtime_message_saved)
+        self._runtime_manager.status_changed.connect(self._on_runtime_status_changed)
+
         self._show_empty()
 
     def _show_empty(self):
@@ -566,10 +553,6 @@ class ChatView(QWidget):
         )
         self.input_edit.setCompleter(self._mention_completer)
 
-    def _on_collab_toggled(self, checked: bool):
-        self._auto_collab_enabled = checked
-        self._collab_toggle.setText("协作: 开" if checked else "协作: 关")
-
     def _send_message(self):
         content = self.input_edit.text().strip()
         if not content or not self._session_id:
@@ -578,188 +561,44 @@ class ChatView(QWidget):
         sid = self._session_id
         engine = get_engine()
 
-        # Parse @mentions
-        with Session(engine) as db:
-            from app.services.message_router import MessageRouter
-            router = MessageRouter(db)
-            mentioned = router.parse_mentions(content)
-
         # Write user message to DB immediately
         db_msg_id = uuid.uuid4().hex
         with Session(engine) as db:
-            db.add(ChatMessage(id=db_msg_id, session_id=sid,
-                               role="user", content=content))
+            db.add(ChatMessage(
+                id=db_msg_id,
+                session_id=sid,
+                role="user",
+                content=content,
+                root_user_message_id=db_msg_id,
+            ))
             db.commit()
 
         self.input_edit.clear()
-
-        # Reset auto-collaboration state for this user-initiated interaction
-        self._auto_collab_round = 0
-        self._called_agents = set()
-
         self._refresh()
 
-        # Create queued message
-        qm = QueuedMessage(
-            content=content,
-            mentioned_agents=mentioned,
-            status="queued",
-            db_msg_id=db_msg_id,
-        )
-
-        # Initialize queue for this session if needed
-        if sid not in self._session_queues:
-            self._session_queues[sid] = deque()
-        self._session_queues[sid].append(qm)
-
-        # If worker is not busy for this session, start processing
-        if sid not in self._session_worker_busy or not self._session_worker_busy[sid]:
-            self._process_next_in_queue(sid)
-        else:
-            # Show queued status
-            agent_names = mentioned or ["Agent"]
-            self._add_status_widget(qm, "queued", agent_names)
-
-    def _process_next_in_queue(self, session_id: str):
-        """Start a SessionWorker for the next message in the session's queue."""
-        queue = self._session_queues.get(session_id)
-        if not queue:
-            self._session_worker_busy[session_id] = False
-            return
-
-        qm = queue.popleft()
-        if qm.status == "cancelled":
-            self._process_next_in_queue(session_id)
-            return
-
-        self._session_worker_busy[session_id] = True
-
-        # Resolve agents to get display names
-        engine = get_engine()
-        with Session(engine) as db:
-            from app.services.message_router import MessageRouter
-            router = MessageRouter(db)
-            if qm.mentioned_agents:
-                agents = router.resolve_agents(qm.mentioned_agents)
-            else:
-                agents = router.resolve_agents([])
-        agent_names = [a.name for a in agents] if agents else ["Agent"]
-
-        # Show thinking status
-        self._add_status_widget(qm, "thinking", agent_names)
-
-        worker = SessionWorker(session_id, qm)
-        worker.thinking.connect(lambda sid: self._on_thinking(sid, qm))
-        worker.done.connect(lambda sid, an: self._on_session_worker_done(sid, an, qm))
-        self._active_workers.append(worker)
-        worker.start()
-
-    def _add_status_widget(self, qm, status: str, agent_names: list[str]):
-        """Add or update a status indicator in the chat view."""
-        # Remove existing status widget for this message if any
-        if qm.db_msg_id in self._status_widgets:
-            existing = self._status_widgets[qm.db_msg_id]
-            existing.update_status(status, agent_names)
-            return
-
-        widget = _StatusWidget(agent_names, status)
-        widget.cancel_clicked.connect(lambda: self._cancel_message(qm))
-        self._status_widgets[qm.db_msg_id] = widget
-        # Insert before the last stretch item
-        self.msg_layout.insertWidget(self.msg_layout.count() - 1, widget)
-
-    def _remove_status_widget(self, qm):
-        """Remove status indicator for a completed/cancelled message."""
-        if qm.db_msg_id in self._status_widgets:
-            widget = self._status_widgets.pop(qm.db_msg_id)
-            widget.deleteLater()
-
-    def _cancel_message(self, qm):
-        """Cancel a queued or in-progress message."""
-        qm.status = "cancelled"
-        # Find and cancel the worker processing this message
-        for w in self._active_workers:
-            if hasattr(w, '_qm') and w._qm is qm:
-                w.cancel()
-                break
-        self._remove_status_widget(qm)
+        # Submit to runtime — dispatcher owns mention parsing and task routing
+        self._runtime_manager.submit_message(sid, db_msg_id)
 
     def shutdown_workers(self):
-        """Cancel all running workers and wait for them to finish. Call on app exit."""
-        for w in list(self._active_workers):
-            if hasattr(w, 'cancel'):
-                w.cancel()
-        for w in list(self._active_workers):
-            if w.isRunning():
-                w.quit()
-                if not w.wait(3000):
-                    w.terminate()
-                    w.wait()
-        self._active_workers.clear()
+        """Shut down the runtime manager. Call on app exit."""
+        self._runtime_manager.shutdown()
 
-    def _on_thinking(self, session_id: str, qm):
-        """Called when a worker starts processing. Status widget already added by _process_next_in_queue."""
-        qm.status = "thinking"
-        # No _refresh() -- it would destroy the status widget just added.
-
-    def _on_session_worker_done(self, session_id: str, agent_name: str, qm):
-        """Called when a worker finishes processing a message."""
-        # Clean up worker reference
-        for w in list(self._active_workers):
-            if hasattr(w, '_qm') and w._qm is qm:
-                self._active_workers.remove(w)
-                break
-
-        self._remove_status_widget(qm)
-
+    def _on_runtime_message_saved(self, session_id: str, message_id: str):
+        """Refresh when the runtime saves a new agent message."""
         if session_id == self._session_id:
             self._refresh()
 
-        # Auto-collaboration check first (may add new items to queue)
-        if self._auto_collab_enabled and self._auto_collab_round < 3 and qm.status != "cancelled":
-            self._check_auto_collab(session_id, agent_name)
-
-        # Process whatever is now in the queue (including auto-collab items)
-        self._process_next_in_queue(session_id)
-
-    def _check_auto_collab(self, session_id: str, agent_name: str):
-        """Check the latest reply from agent_name for @mentions to other agents."""
-        engine = get_engine()
-        with Session(engine) as db:
-            from app.services.message_router import MessageRouter
-            msg = db.exec(
-                select(ChatMessage)
-                .where(
-                    ChatMessage.session_id == session_id,
-                    ChatMessage.agent_name == agent_name,
-                )
-                .order_by(ChatMessage.created_at.desc())
-            ).first()
-            if not msg:
-                return
-
-            router = MessageRouter(db)
-            mentions = router.parse_mentions(msg.content)
-            new_mentions = [m for m in mentions if m not in self._called_agents]
-
-            if new_mentions:
-                self._auto_collab_round += 1
-                for name in new_mentions:
-                    self._called_agents.add(name)
-                db.add(ChatMessage(
-                    id=uuid.uuid4().hex,
-                    session_id=session_id,
-                    role="system",
-                    content=f"[自动协作 第{self._auto_collab_round}轮] {agent_name} 调用了 {', '.join(f'@{n}' for n in new_mentions)}",
-                ))
-                db.commit()
-                # Queue a new message for the mentioned agents
-                qm = QueuedMessage(
-                    content=msg.content,
-                    mentioned_agents=new_mentions,
-                    status="queued",
-                    db_msg_id=uuid.uuid4().hex,
-                )
-                if session_id not in self._session_queues:
-                    self._session_queues[session_id] = deque()
-                self._session_queues[session_id].append(qm)
+    def _on_runtime_status_changed(self, session_id: str, entries: list):
+        """Update status display from runtime status entries."""
+        if session_id != self._session_id:
+            return
+        # First version: simple status — full widget integration is a follow-up
+        if not entries:
+            return
+        # Update existing status widget or show runtime activity
+        active_entries = [e for e in entries if e.state in ("running", "queued")]
+        if active_entries:
+            names = [e.agent_name for e in active_entries]
+            self._last_status_names = names
+        elif hasattr(self, "_last_status_names"):
+            del self._last_status_names
