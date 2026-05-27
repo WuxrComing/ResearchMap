@@ -1,14 +1,14 @@
 import { BrowserRouter } from "react-router-dom";
-import { AppProvider } from "./hooks/provider";
-import Layout from "./components/layout";
+import AppProvider from "./hooks/provider";
+import AppLayout from "./components/layout";
 
 function App() {
   return (
-    <AppProvider>
-      <BrowserRouter>
-        <Layout />
-      </BrowserRouter>
-    </AppProvider>
+    <BrowserRouter>
+      <AppProvider>
+        <AppLayout />
+      </AppProvider>
+    </BrowserRouter>
   );
 }
 

@@ -1,16 +1,56 @@
 /** @type {import('tailwindcss').Config} */
-export default {
-  content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
-  darkMode: "class",
+module.exports = {
+  content: [
+    `./src/pages/**/*.{js,jsx,ts,tsx}`,
+    `./src/components/**/*.{js,jsx,ts,tsx}`,
+  ],
   theme: {
     extend: {
+      typography: {
+        DEFAULT: {
+          css: {
+            maxWidth: "100ch",
+          },
+        },
+      },
+      transitionProperty: {
+        height: "height",
+        spacing: "margin, padding",
+      },
       colors: {
-        primary: "var(--color-primary)",
-        secondary: "var(--color-secondary)",
-        tertiary: "var(--color-tertiary)",
-        accent: "var(--color-accent)",
+        primary: "var(--color-bg-primary)",
+        secondary: "var(--color-bg-secondary)",
+        accent: "var(--color-bg-accent)",
+        light: "var(--color-bg-light)",
+        tertiary: "var(--color-bg-tertiary)",
+      },
+      textColor: {
+        accent: "var(--color-text-accent)",
+        primary: "var(--color-text-primary)",
+        secondary: "var(--color-text-secondary)",
+      },
+      borderColor: {
+        accent: "var(--color-border-accent)",
+        primary: "var(--color-border-primary)",
+        secondary: "var(--color-border-secondary)",
+      },
+      ringColor: {
+        accent: "var(--color-text-accent)",
+        primary: "var(--color-text-primary)",
+        secondary: "var(--color-text-secondary)",
       },
     },
   },
-  plugins: [],
+  plugins: [
+    require("@tailwindcss/typography"),
+    function ({ addBase, theme }) {
+      addBase({
+        ":root": {
+          "--tw-bg-opacity": "1",
+          "--tw-text-opacity": "1",
+          "--tw-border-opacity": "1",
+        },
+      });
+    },
+  ],
 };

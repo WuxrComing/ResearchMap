@@ -1,19 +1,42 @@
-import React, { createContext, useState, useEffect } from "react";
+import React, { useState } from "react";
+import { getLocalStorage, setLocalStorage } from "../components/utils/utils";
 
-interface AppContextType {
+export interface AppContextType {
   darkMode: string;
-  setDarkMode: (mode: string) => void;
+  setDarkMode: any;
+  user: null;
+  setUser: any;
+  logout: any;
+  cookie_name: string;
 }
 
-export const appContext = createContext<AppContextType>({ darkMode: "light", setDarkMode: () => {} });
+export const appContext = React.createContext<AppContextType>({} as AppContextType);
 
-export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [darkMode, setDarkMode] = useState(() => {
-    if (typeof window !== "undefined") return localStorage.getItem("darkMode") || "light";
-    return "light";
-  });
+const AppProvider = ({ children }: any) => {
+  const storedValue = getLocalStorage("darkmode", false);
+  const [darkMode, setDarkMode] = useState(
+    storedValue === null ? "light" : storedValue === "dark" ? "dark" : "light"
+  );
 
-  useEffect(() => { localStorage.setItem("darkMode", darkMode); }, [darkMode]);
+  const updateDarkMode = (darkMode: string) => {
+    setDarkMode(darkMode);
+    setLocalStorage("darkmode", darkMode, false);
+  };
 
-  return <appContext.Provider value={{ darkMode, setDarkMode }}>{children}</appContext.Provider>;
+  return (
+    <appContext.Provider
+      value={{
+        user: null,
+        setUser: () => {},
+        logout: () => {},
+        cookie_name: "coral_app_cookie_",
+        darkMode,
+        setDarkMode: updateDarkMode,
+      }}
+    >
+      {children}
+    </appContext.Provider>
+  );
 };
+
+export default AppProvider;
