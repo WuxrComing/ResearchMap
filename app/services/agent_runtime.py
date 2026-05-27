@@ -1,4 +1,5 @@
 import re
+import threading
 import uuid
 from collections import deque
 from contextlib import nullcontext
@@ -856,6 +857,54 @@ class _RuntimeWorkerThread(QThread):
         self._runtime._emit_status()
 
 
+class NativeWorkerThread(threading.Thread):
+    """Non-Qt alternative to _RuntimeWorkerThread for web server use."""
+
+    def __init__(self, runtime, agent_name: str):
+        super().__init__(daemon=True)
+        self._runtime = runtime
+        self._agent_name = agent_name
+
+    def isRunning(self) -> bool:
+        return self.is_alive()
+
+    def quit(self) -> None:
+        pass  # Thread exits naturally when runtime is closed
+
+    def wait(self, timeout: int = 3000) -> bool:
+        self.join(timeout / 1000.0)
+        return not self.is_alive()
+
+    def run(self):
+        while not self._runtime.closed:
+            queue = self._runtime.queues.get(self._agent_name)
+            if not queue:
+                break
+            try:
+                task = queue.popleft()
+            except IndexError:
+                break
+
+            if task.root_user_message_id in self._runtime.canceled_roots:
+                continue
+
+            worker = self._runtime._ensure_worker(self._agent_name)
+            self._runtime._active_workers_count += 1
+            self._runtime._emit_status()
+            try:
+                message_id = worker.process_one(task)
+            finally:
+                self._runtime._active_workers_count -= 1
+
+            if message_id is not None:
+                self._runtime.on_message_saved(message_id)
+                self._runtime._start_draining()
+
+        self._runtime.queues.pop(self._agent_name, None)
+        self._runtime._threads.pop(self._agent_name, None)
+        self._runtime._emit_status()
+
+
 class SessionRuntime:
     def __init__(
         self,
@@ -874,7 +923,8 @@ class SessionRuntime:
         self.status_changed_signal = status_changed_signal
         self.queues: dict[str, deque[AgentTask]] = {}
         self.workers: dict[str, AgentWorker] = {}
-        self._threads: dict[str, _RuntimeWorkerThread] = {}
+        self._threads: dict[str, threading.Thread | _RuntimeWorkerThread] = {}
+        self._thread_class = NativeWorkerThread  # can be swapped for tests
         self.processed_keys: set[tuple] = set()
         self.canceled_roots: set[str] = set()
         self._closed = False
@@ -916,7 +966,7 @@ class SessionRuntime:
             if agent_name in self._threads and self._threads[agent_name].isRunning():
                 continue
             self._ensure_worker(agent_name)
-            thread = _RuntimeWorkerThread(self, agent_name)
+            thread = self._thread_class(self, agent_name)
             self._threads[agent_name] = thread
             thread.start()
 
