@@ -183,6 +183,44 @@ def test_user_message_with_multiple_mentions_creates_only_mentioned_user_request
     assert "Topic Agent" not in {task.target_agent for task in tasks}
 
 
+def test_user_message_with_only_fenced_code_mention_falls_back_to_topic(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, _, session_id = dispatcher_context
+    content = "```text\n@Paper Agent find papers.\n```"
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(session_id, "msg-1", "user", content),
+    )
+
+    tasks = dispatcher.handle_message_saved(message.id)
+
+    assert len(tasks) == 1
+    assert tasks[0].target_agent == "Topic Agent"
+    assert tasks[0].task_type == "user_request"
+    assert tasks[0].instruction == content
+
+
+def test_user_message_with_only_malformed_mention_falls_back_to_topic(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, _, session_id = dispatcher_context
+    content = "@Paper Agent2 find papers."
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(session_id, "msg-1", "user", content),
+    )
+
+    tasks = dispatcher.handle_message_saved(message.id)
+
+    assert len(tasks) == 1
+    assert tasks[0].target_agent == "Topic Agent"
+    assert tasks[0].task_type == "user_request"
+    assert tasks[0].instruction == content
+
+
 def test_topic_message_with_paper_mention_creates_paper_dispatch_task(
     runtime_engine,
     dispatcher_context,

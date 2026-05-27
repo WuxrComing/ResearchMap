@@ -92,8 +92,12 @@ class AgentDispatcher:
         root_id: str,
     ) -> list[AgentTask]:
         router = self._router()
-        mentions = router.parse_mentions(message.content)
-        if not mentions:
+        instructions = split_mention_instructions(
+            message.content,
+            router,
+            source_agent="User",
+        )
+        if not instructions:
             topic_agent = router.resolve_agents([])[0]
             return [
                 self._make_task(
@@ -107,11 +111,6 @@ class AgentDispatcher:
                 )
             ]
 
-        instructions = split_mention_instructions(
-            message.content,
-            router,
-            source_agent="User",
-        )
         return [
             self._make_task(
                 session_id=message.session_id,
@@ -122,8 +121,7 @@ class AgentDispatcher:
                 trigger_id=message.id,
                 dispatch_depth=0,
             )
-            for agent_name in mentions
-            if agent_name in instructions
+            for agent_name in instructions
         ]
 
     def _tasks_for_topic_message(
