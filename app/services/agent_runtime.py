@@ -246,7 +246,7 @@ class AgentDispatcher:
         return self._enqueue_review_tasks(tasks, persist_review_result)
 
     def _review_message_processed(self, message: ChatMessage) -> bool:
-        return message.review_status == "processed"
+        return message.dispatch_processed
 
     def _enqueue_review_tasks(
         self,
@@ -288,9 +288,7 @@ class AgentDispatcher:
             if review_message_id:
                 review_message = session.get(ChatMessage, review_message_id)
                 if review_message:
-                    review_message.review_status = "processed"
-                    review_message.review_score = review.score
-                    review_message.review_summary = review.summary
+                    review_message.dispatch_processed = True
                     session.add(review_message)
             session.commit()
 

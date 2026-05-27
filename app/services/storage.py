@@ -90,6 +90,9 @@ def _migrate_chat_message_runtime_metadata(engine):
         "dispatch_depth": (
             "ALTER TABLE chat_messages ADD COLUMN dispatch_depth INTEGER DEFAULT 0"
         ),
+        "dispatch_processed": (
+            "ALTER TABLE chat_messages ADD COLUMN dispatch_processed INTEGER DEFAULT 0"
+        ),
     }
     indexes_to_create = [
         "CREATE INDEX IF NOT EXISTS ix_chat_messages_task_id "
@@ -100,6 +103,8 @@ def _migrate_chat_message_runtime_metadata(engine):
         "ON chat_messages (root_user_message_id)",
         "CREATE INDEX IF NOT EXISTS ix_chat_messages_target_message_id "
         "ON chat_messages (target_message_id)",
+        "CREATE INDEX IF NOT EXISTS ix_chat_messages_dispatch_processed "
+        "ON chat_messages (dispatch_processed)",
     ]
 
     with engine.connect() as conn:

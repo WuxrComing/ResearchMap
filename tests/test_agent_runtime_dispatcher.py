@@ -467,6 +467,9 @@ def test_topic_review_redo_processed_twice_increments_redo_count_once(
     assert len(enqueued) == 1
     updated = load_message(runtime_engine, target.id)
     assert updated.redo_count == 1
+    processed_review = load_message(runtime_engine, review.id)
+    assert processed_review.dispatch_processed is True
+    assert processed_review.review_status is None
 
 
 def test_topic_review_redo_processed_by_new_dispatcher_does_not_repeat(
@@ -502,6 +505,9 @@ def test_topic_review_redo_processed_by_new_dispatcher_does_not_repeat(
     assert second_enqueued == []
     updated = load_message(runtime_engine, target.id)
     assert updated.redo_count == 1
+    processed_review = load_message(runtime_engine, review.id)
+    assert processed_review.dispatch_processed is True
+    assert processed_review.review_status is None
 
 
 def test_topic_review_redo_enqueue_failure_does_not_increment_redo_count_and_retry_enqueues(

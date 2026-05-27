@@ -47,6 +47,7 @@ def test_chat_message_runtime_lineage_columns_exist():
     assert "trigger_message_id" in columns
     assert "target_message_id" in columns
     assert "dispatch_depth" in columns
+    assert "dispatch_processed" in columns
 
 
 def test_chat_message_runtime_lineage_indexes_exist_on_migrated_table():
@@ -79,6 +80,47 @@ def test_chat_message_runtime_lineage_indexes_exist_on_migrated_table():
     assert "ix_chat_messages_task_type" in index_names
     assert "ix_chat_messages_root_user_message_id" in index_names
     assert "ix_chat_messages_target_message_id" in index_names
+    assert "ix_chat_messages_dispatch_processed" in index_names
+
+
+def test_chat_message_dispatch_processed_migrates_existing_table_with_default():
+    engine = get_engine()
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE chat_messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT,
+                content TEXT,
+                agent_name TEXT,
+                node_id TEXT,
+                review_status TEXT,
+                review_score INTEGER,
+                review_summary TEXT,
+                redo_count INTEGER,
+                created_at DATETIME
+            )
+        """))
+        conn.execute(text("""
+            INSERT INTO chat_messages (
+                id, session_id, role, content, agent_name, redo_count
+            ) VALUES (
+                'msg-1', 'session-1', 'user', 'hello', '', 0
+            )
+        """))
+        conn.commit()
+
+    init_db()
+
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info('chat_messages')"))
+        columns = {row[1]: row for row in result.fetchall()}
+        dispatch_processed = conn.execute(
+            text("SELECT dispatch_processed FROM chat_messages WHERE id = 'msg-1'")
+        ).scalar_one()
+
+    assert "dispatch_processed" in columns
+    assert dispatch_processed == 0
 
 
 def test_fts5_insert_trigger():

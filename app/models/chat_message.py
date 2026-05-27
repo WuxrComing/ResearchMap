@@ -25,6 +25,7 @@ class ChatMessage(SQLModel, table=True):
     trigger_message_id: str | None = Field(default=None)
     target_message_id: str | None = Field(default=None, index=True)
     dispatch_depth: int = Field(default=0)
+    dispatch_processed: bool = Field(default=False, index=True)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
     )

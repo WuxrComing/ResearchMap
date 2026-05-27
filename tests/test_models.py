@@ -176,6 +176,7 @@ def test_chat_message_accepts_runtime_lineage_fields():
         trigger_message_id="trigger_1",
         target_message_id=None,
         dispatch_depth=2,
+        dispatch_processed=True,
     )
 
     assert msg.task_id == "task_1"
@@ -184,6 +185,17 @@ def test_chat_message_accepts_runtime_lineage_fields():
     assert msg.trigger_message_id == "trigger_1"
     assert msg.target_message_id is None
     assert msg.dispatch_depth == 2
+    assert msg.dispatch_processed is True
+
+
+def test_chat_message_dispatch_processed_defaults_false():
+    msg = ChatMessage(
+        session_id="sess",
+        role="user",
+        content="hello",
+    )
+
+    assert msg.dispatch_processed is False
 
 
 def test_all_tables_created():
