@@ -42,8 +42,6 @@ export interface IConfigState {
   setBreadcrumbs: (breadcrumbs: IBreadcrumb[]) => void;
 
   sidebar: ISidebarState;
-  sidebarWidth: number;
-  setSidebarWidth: (width: number) => void;
   setSidebarState: (state: Partial<ISidebarState>) => void;
   collapseSidebar: () => void;
   expandSidebar: () => void;
@@ -85,8 +83,6 @@ export const useConfigStore = create<IConfigState>()(
         set((state) => ({ agentFlow: { ...state.agentFlow, ...newSettings } })),
 
       sidebar: { isExpanded: true, isPinned: false },
-      sidebarWidth: 288,
-      setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
       setSidebarState: (newState) =>
         set((state) => ({ sidebar: { ...state.sidebar, ...newState } })),
       collapseSidebar: () =>
@@ -99,7 +95,7 @@ export const useConfigStore = create<IConfigState>()(
     {
       name: "app-sidebar-state",
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ sidebar: state.sidebar, sidebarWidth: state.sidebarWidth, agentFlow: state.agentFlow }),
+      partialize: (state) => ({ sidebar: state.sidebar, agentFlow: state.agentFlow }),
     }
   )
 );

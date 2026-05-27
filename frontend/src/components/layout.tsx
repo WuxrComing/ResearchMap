@@ -17,52 +17,9 @@ const classNames = (...classes: (string | undefined | boolean)[]) => {
   return classes.filter(Boolean).join(" ");
 };
 
-const SidebarResizeHandle: React.FC = () => {
-  const dragging = React.useRef(false);
-  const startX = React.useRef(0);
-  const sidebarWidth = useConfigStore((s) => s.sidebarWidth);
-  const setSidebarWidth = useConfigStore((s) => s.setSidebarWidth);
-
-  const onMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    dragging.current = true;
-    startX.current = e.clientX;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  };
-
-  React.useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => {
-      if (!dragging.current) return;
-      const delta = e.clientX - startX.current;
-      startX.current = e.clientX;
-      setSidebarWidth(Math.max(200, Math.min(500, sidebarWidth + delta)));
-    };
-    const onMouseUp = () => {
-      dragging.current = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-    return () => {
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-    };
-  }, [sidebarWidth, setSidebarWidth]);
-
-  return (
-    <div
-      className="fixed inset-y-0 z-40 w-1.5 cursor-col-resize hover:bg-accent/50 active:bg-accent transition-colors"
-      style={{ left: sidebarWidth - 2 }}
-      onMouseDown={onMouseDown}
-    />
-  );
-};
-
 const AppLayout = () => {
   const { darkMode } = React.useContext(appContext);
-  const { sidebar, sidebarWidth } = useConfigStore();
+  const { sidebar } = useConfigStore();
   const { isExpanded } = sidebar;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
   const location = useLocation();
@@ -79,8 +36,6 @@ const AppLayout = () => {
       darkMode === "dark" ? "dark bg-primary" : "light bg-primary"
     }`;
   }, [darkMode]);
-
-  const contentOffset = isExpanded ? sidebarWidth : 64;
 
   return (
     <div className="min-h-screen flex">
@@ -114,16 +69,14 @@ const AppLayout = () => {
         <SideBar link={link} meta={meta} isMobile={false} />
       </div>
 
-      {/* Sidebar resize handle — only when expanded */}
-      {isExpanded && <SidebarResizeHandle />}
-
       {/* Content area */}
       <div
         className={classNames(
           "flex-1 flex flex-col min-h-screen",
           "transition-all duration-300 ease-in-out",
+          "md:pl-16",
+          isExpanded ? "md:pl-72" : "md:pl-16"
         )}
-        style={{ paddingLeft: contentOffset }}
       >
         <ContentHeader
           isMobileMenuOpen={isMobileMenuOpen}
