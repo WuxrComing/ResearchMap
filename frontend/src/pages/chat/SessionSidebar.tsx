@@ -13,7 +13,7 @@ interface Props {
 
 const SessionSidebar: React.FC<Props> = ({ sessions, activeId, onSelect, onCreate, onDelete }) => {
   return (
-    <div className="w-full border-r border-secondary p-2 flex flex-col">
+    <div className="w-full h-full border-r border-secondary p-2 flex flex-col">
       <Button size="small" type="primary" icon={<PlusOutlined />} onClick={onCreate} className="mb-2">新会话</Button>
       <div className="flex-1 overflow-y-auto space-y-1">
         {sessions.map((s) => {
