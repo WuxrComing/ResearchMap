@@ -83,35 +83,32 @@ const ContentHeader = ({ onMobileMenuToggle, isMobileMenuOpen: _isMobileMenuOpen
               <h1 className="text-lg font-medium text-primary">{title}</h1>
             )}
 
-            {/* Workspace info — shown when viewing a workspace */}
-            {workspace && (
-              <div className="ml-6 flex items-center gap-2 min-w-0">
-                <div className="w-px h-6 bg-secondary/40" />
-                {editing ? (
-                  <input
-                    className="text-sm font-medium bg-secondary/20 border border-accent rounded px-2 py-0.5 text-primary focus:outline-none w-40"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    onBlur={saveEdit}
-                    onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") setEditing(false); }}
-                    autoFocus
-                  />
-                ) : (
-                  <>
-                    <span className="text-sm font-medium text-primary truncate">{workspace.title}</span>
-                    <button
-                      onClick={startEdit}
-                      className="p-0.5 rounded hover:bg-secondary text-secondary hover:text-accent transition-colors shrink-0"
-                      title="编辑课题名称"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                  </>
-                )}
-                {workspace.description && (
-                  <span className="text-xs text-secondary truncate hidden sm:inline">{workspace.description}</span>
-                )}
-              </div>
+            {/* Workspace description — shown when viewing a workspace */}
+            {workspace?.description && (
+              <span className="ml-4 text-xs text-secondary truncate hidden sm:inline">{workspace.description}</span>
+            )}
+
+            {/* Edit workspace button */}
+            {workspace && !editing && (
+              <button
+                onClick={startEdit}
+                className="ml-1 p-0.5 rounded hover:bg-secondary text-secondary hover:text-accent transition-colors shrink-0"
+                title="编辑课题名称"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+
+            {/* Inline edit input */}
+            {editing && (
+              <input
+                className="ml-2 text-sm font-medium bg-secondary/20 border border-accent rounded px-2 py-0.5 text-primary focus:outline-none w-40"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onBlur={saveEdit}
+                onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") setEditing(false); }}
+                autoFocus
+              />
             )}
           </div>
 
