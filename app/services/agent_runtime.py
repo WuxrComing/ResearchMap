@@ -217,7 +217,9 @@ class AgentDispatcher:
             missing_ids = required_ids - set(messages_by_id)
             if missing_ids:
                 required_messages = session.exec(
-                    select(ChatMessage).where(ChatMessage.id.in_(missing_ids))
+                    select(ChatMessage)
+                    .where(ChatMessage.session_id == session_id)
+                    .where(ChatMessage.id.in_(missing_ids))
                 ).all()
                 messages_by_id.update(
                     {message.id: message for message in required_messages}
@@ -277,8 +279,8 @@ class AgentDispatcher:
         if key in self.processed_keys:
             return False
 
-        self.processed_keys.add(key)
         self.enqueue_task(task)
+        self.processed_keys.add(key)
         return True
 
     def _processed_key(self, task: AgentTask):
@@ -295,7 +297,9 @@ class AgentDispatcher:
 
     def _router(self) -> MessageRouter:
         with Session(self.engine) as session:
-            return MessageRouter(session)
+            router = MessageRouter(session)
+            router._db = None
+            return router
 
 
 @dataclass

@@ -337,6 +337,83 @@ def test_non_topic_review_message_creates_no_review_task(
     assert enqueued == []
 
 
+def test_context_snapshot_does_not_include_required_ids_from_other_sessions(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, _, session_id = dispatcher_context
+    with Session(runtime_engine) as session:
+        session.add(
+            ChatSession(
+                id="session-2",
+                workspace_id="topic-1",
+                title="Other session",
+            )
+        )
+        session.commit()
+    save_message(
+        runtime_engine,
+        **message_kwargs(
+            "session-2",
+            "msg-99",
+            "user",
+            "This cross-session message must not leak.",
+        ),
+    )
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-2",
+            "assistant",
+            "Paper answer.",
+            agent_name="Paper Agent",
+            root_user_message_id="msg-99",
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(message.id)
+
+    context_ids = [item.message_id for item in tasks[0].context_snapshot]
+    assert message.id in context_ids
+    assert "msg-99" not in context_ids
+
+
+def test_enqueue_failure_does_not_mark_task_processed(
+    runtime_engine,
+    runtime_db_session,
+    runtime_session_id,
+):
+    enqueued = []
+
+    def failing_enqueue(task):
+        raise RuntimeError("queue unavailable")
+
+    dispatcher = AgentDispatcher(runtime_engine, failing_enqueue)
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(runtime_session_id, "msg-1", "user", "@Paper Agent retry."),
+    )
+
+    with pytest.raises(RuntimeError, match="queue unavailable"):
+        dispatcher.handle_message_saved(message.id)
+
+    dispatcher.enqueue_task = enqueued.append
+    tasks = dispatcher.handle_message_saved(message.id)
+
+    assert len(tasks) == 1
+    assert enqueued == tasks
+
+
+def test_runtime_router_does_not_retain_db_session(runtime_engine, runtime_db_session):
+    dispatcher = AgentDispatcher(runtime_engine, lambda task: None)
+
+    router = dispatcher._router()
+
+    assert getattr(router, "_db", None) is None
+    assert router.parse_mentions("@Paper Agent retry.") == ["Paper Agent"]
+
+
 def test_system_message_creates_no_task(runtime_engine, dispatcher_context):
     dispatcher, enqueued, session_id = dispatcher_context
     message = save_message(
