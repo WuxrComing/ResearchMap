@@ -60,13 +60,15 @@ const Sidebar = ({ link: _link, meta, isMobile }: SidebarProps) => {
     }
   };
 
+  const sidebarWidth = useConfigStore((s) => s.sidebarWidth);
+
   return (
     <div
       className={classNames(
-        "flex grow z-50 flex-col gap-y-5 overflow-y-auto border-r border-secondary bg-primary",
-        "transition-all duration-300 ease-in-out",
-        showFull ? "w-72 px-6" : "w-16 px-2"
+        "flex grow z-50 flex-col gap-y-5 overflow-y-auto border-r border-secondary bg-primary h-full",
+        "transition-all duration-300 ease-in-out"
       )}
+      style={{ width: showFull ? sidebarWidth : 64, paddingLeft: showFull ? 24 : 8, paddingRight: showFull ? 24 : 8 }}
     >
       {/* App Logo/Title */}
       <div className={`flex h-16 items-center ${showFull ? "gap-x-3" : "ml-2"}`}>
