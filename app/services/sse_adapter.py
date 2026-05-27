@@ -41,13 +41,13 @@ class SSEAdapter:
         from sqlmodel import Session
         with Session(self.engine) as db:
             msg = db.get(ChatMessage, message_id)
-        if msg is None:
-            return
-        event = SSEEvent(event="message", data=json.dumps({
-            "id": msg.id, "role": msg.role, "content": msg.content,
-            "agent_name": msg.agent_name, "review_status": msg.review_status,
-            "created_at": msg.created_at.isoformat() if msg.created_at else None,
-        }, default=str))
+            if msg is None:
+                return
+            event = SSEEvent(event="message", data=json.dumps({
+                "id": msg.id, "role": msg.role, "content": msg.content,
+                "agent_name": msg.agent_name, "review_status": msg.review_status,
+                "created_at": msg.created_at.isoformat() if msg.created_at else None,
+            }, default=str))
         try:
             self._get_queue(session_id).put_nowait(event)
         except asyncio.QueueFull:

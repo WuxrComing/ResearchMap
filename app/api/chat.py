@@ -1,6 +1,5 @@
 """Chat API routes with SSE streaming."""
 import uuid
-import asyncio
 import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, select
@@ -65,6 +64,7 @@ async def send_message(body: SendMessageRequest, request: Request):
 
     # Write user message
     msg_id = uuid.uuid4().hex
+    msg_created_at = None
     with Session(engine) as db:
         msg = ChatMessage(
             id=msg_id, session_id=body.session_id,
@@ -72,31 +72,28 @@ async def send_message(body: SendMessageRequest, request: Request):
         )
         db.add(msg)
         db.commit()
+        db.refresh(msg)
+        msg_created_at = msg.created_at.isoformat() if msg.created_at else None
 
     # Submit to runtime (triggers agent pipeline in background threads)
     adapter.submit_message(body.session_id, msg_id)
     adapter.start_draining(body.session_id)
 
     async def event_generator():
-        q = await adapter.event_stream(body.session_id)
         # Send the initial user message as first event
         yield {
             "event": "message",
             "data": json.dumps({
                 "id": msg_id, "role": "user", "content": body.content,
                 "agent_name": None, "review_status": None,
-                "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                "created_at": msg_created_at,
             }, default=str),
         }
 
-        while True:
+        async for event in adapter.event_stream(body.session_id):
             if await request.is_disconnected():
                 break
-            try:
-                event = await asyncio.wait_for(q.get(), timeout=30.0)
-                yield {"event": event.event, "data": event.data}
-            except asyncio.TimeoutError:
-                yield {"event": "ping", "data": "{}"}
+            yield {"event": event.event, "data": event.data}
 
     return EventSourceResponse(event_generator())
 
