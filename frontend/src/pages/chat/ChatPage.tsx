@@ -9,13 +9,9 @@ import MindMapPanel from "../mindmap/MindMapPanel";
 const ChatPage: React.FC = () => {
   const { workspaceId } = useParams<{ workspaceId: string }>();
   const navigate = useNavigate();
-  const { workspaces, setWorkspaces, setSelectedId } = useWorkspaceStore();
+  const { workspaces, setSelectedId } = useWorkspaceStore();
   const { sessions, setSessions, activeId, setActiveId, setLoading } = useSessionStore();
   const [mindmapVisible, setMindmapVisible] = useState(true);
-
-  useEffect(() => {
-    fetchWorkspaces();
-  }, []);
 
   useEffect(() => {
     if (!workspaceId) {
@@ -28,14 +24,7 @@ const ChatPage: React.FC = () => {
     }
     setSelectedId(workspaceId);
     fetchSessions();
-  }, [workspaceId, workspaces]);
-
-  const fetchWorkspaces = async () => {
-    try {
-      const data = await api.listWorkspaces();
-      setWorkspaces(data);
-    } catch { /* */ }
-  };
+  }, [workspaceId]);
 
   const fetchSessions = async () => {
     if (!workspaceId) return;
@@ -57,29 +46,11 @@ const ChatPage: React.FC = () => {
     } catch { /* */ }
   };
 
+  if (!workspaceId) return null;
+
   return (
     <div className="flex h-[calc(100vh-120px)]">
-      {/* Column 1: Workspace list */}
-      <div className="w-48 border-r border-secondary flex flex-col">
-        <div className="text-xs font-semibold text-secondary uppercase px-3 py-2 tracking-wider">课题</div>
-        <div className="flex-1 overflow-y-auto">
-          {workspaces.map((w) => (
-            <div
-              key={w.id}
-              onClick={() => { setActiveId(null); navigate(`/chat/${w.id}`); }}
-              className={`px-3 py-1.5 text-sm cursor-pointer truncate ${
-                w.id === workspaceId
-                  ? "bg-secondary/20 text-primary font-medium"
-                  : "text-secondary hover:bg-tertiary hover:text-primary"
-              }`}
-            >
-              {w.title}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Column 2: Session list */}
+      {/* Session list */}
       <SessionSidebar
         sessions={sessions}
         activeId={activeId}
@@ -88,7 +59,7 @@ const ChatPage: React.FC = () => {
         onDelete={async (id) => { await api.deleteSession(id); await fetchSessions(); }}
       />
 
-      {/* Column 3 + 4: Chat + Mindmap */}
+      {/* Chat + Mindmap */}
       <div className="flex-1 flex">
         <div className="flex-1">
           {activeId ? (
