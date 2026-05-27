@@ -250,7 +250,63 @@ def test_non_topic_assistant_message_creates_topic_review_task_with_target(
     assert task.target_message_id == message.id
     assert task.trigger_message_id == message.id
     assert task.root_user_message_id == root.id
+    assert (
+        task.instruction
+        == "请审查 Paper Agent 的目标回复，只输出 [REVIEW]...[/REVIEW] 审查卡片。"
+    )
     assert task.dispatch_depth == 3
+
+
+def test_mutating_canceled_roots_after_dispatcher_construction_gates_tasks(
+    runtime_engine,
+    runtime_db_session,
+    runtime_session_id,
+):
+    enqueued = []
+    canceled_roots = set()
+    dispatcher = AgentDispatcher(
+        runtime_engine,
+        enqueued.append,
+        canceled_roots=canceled_roots,
+    )
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(runtime_session_id, "msg-1", "user", "Cancel before run."),
+    )
+    canceled_roots.add(message.id)
+
+    tasks = dispatcher.handle_message_saved(message.id)
+
+    assert tasks == []
+    assert enqueued == []
+
+
+def test_topic_review_message_creates_no_dispatch_task(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, enqueued, session_id = dispatcher_context
+    root = save_message(
+        runtime_engine,
+        **message_kwargs(session_id, "msg-1", "user", "Root request."),
+    )
+    message = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-2",
+            "assistant",
+            "[REVIEW]\nsummary: mentions @Paper Agent\n[/REVIEW]",
+            agent_name="Topic Agent",
+            root_user_message_id=root.id,
+            task_type="review",
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(message.id)
+
+    assert tasks == []
+    assert enqueued == []
 
 
 def test_system_message_creates_no_task(runtime_engine, dispatcher_context):
@@ -365,6 +421,7 @@ def test_dispatch_depth_at_max_allowed_but_child_beyond_max_rejected(
     assert allowed_tasks[0].dispatch_depth == dispatcher.MAX_DISPATCH_DEPTH
     assert rejected_tasks == []
     assert enqueued == allowed_tasks
+
 
 def test_find_mention_spans_returns_positions_and_duplicates(router):
     text = "@Paper Agent first, @Memory Agent second, @Paper Agent again"

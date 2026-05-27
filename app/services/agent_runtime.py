@@ -57,7 +57,7 @@ class AgentDispatcher:
     ):
         self.engine = engine
         self.enqueue_task = enqueue_task
-        self.canceled_roots = set(canceled_roots or set())
+        self.canceled_roots = canceled_roots if canceled_roots is not None else set()
         self.processed_keys = processed_keys if processed_keys is not None else set()
 
     def handle_message_saved(self, message_id: str) -> list[AgentTask]:
@@ -72,6 +72,8 @@ class AgentDispatcher:
         if message.role == "user":
             tasks = self._tasks_for_user_message(message, root_id)
         elif message.role == "assistant" and message.agent_name == "Topic Agent":
+            if message.task_type == "review":
+                return []
             tasks = self._tasks_for_topic_message(message, root_id)
         elif message.role == "assistant":
             tasks = [self._make_review_task(message, root_id)]
@@ -160,7 +162,10 @@ class AgentDispatcher:
             session_id=message.session_id,
             target_agent=topic_agent.name,
             task_type="review",
-            instruction=message.content,
+            instruction=(
+                f"请审查 {message.agent_name} 的目标回复，"
+                "只输出 [REVIEW]...[/REVIEW] 审查卡片。"
+            ),
             root_id=root_id,
             trigger_id=message.id,
             target_id=message.id,
