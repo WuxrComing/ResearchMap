@@ -191,10 +191,6 @@ class AgentDispatcher:
             if target is None or target.session_id != message.session_id:
                 return []
 
-            target.review_status = self._review_status_for_action(review)
-            target.review_score = review.score
-            target.review_summary = review.summary
-
             target_id = target.id
             target_agent = target.agent_name
             target_dispatch_depth = target.dispatch_depth or 0
@@ -204,20 +200,15 @@ class AgentDispatcher:
                 or target.root_user_message_id
                 or self._latest_root_for_message(message)
             )
-
             redo_exhausted = (
                 review.action == "redo" and redo_count >= self.MAX_REDO_ROUNDS
             )
-            if review.action == "redo" and not redo_exhausted:
-                redo_count += 1
-                target.redo_count = redo_count
-
-            session.add(target)
-            session.commit()
 
         if review.action == "accept":
-            tasks = []
+            self._persist_review_result(message.target_message_id, review)
+            return []
         elif review.action == "redo":
+            task_redo_count = redo_count if redo_exhausted else redo_count + 1
             tasks = self._tasks_for_redo_review(
                 message=message,
                 review_summary=review.summary,
@@ -225,7 +216,7 @@ class AgentDispatcher:
                 target_id=target_id,
                 target_agent=target_agent,
                 dispatch_depth=target_dispatch_depth,
-                redo_count=redo_count,
+                redo_count=task_redo_count,
                 redo_exhausted=redo_exhausted,
             )
         elif review.action == "supplement":
@@ -242,7 +233,33 @@ class AgentDispatcher:
         for task in tasks:
             if self._enqueue_once(task):
                 enqueued.append(task)
+        if enqueued:
+            self._persist_review_result(
+                target_id,
+                review,
+                redo_count=task_redo_count if review.action == "redo" else None,
+            )
         return enqueued
+
+    def _persist_review_result(
+        self,
+        target_id: str,
+        review,
+        redo_count: int | None = None,
+    ) -> None:
+        with Session(self.engine) as session:
+            target = session.get(ChatMessage, target_id)
+            if target is None:
+                return
+
+            target.review_status = self._review_status_for_action(review)
+            target.review_score = review.score
+            target.review_summary = review.summary
+            if redo_count is not None:
+                target.redo_count = redo_count
+
+            session.add(target)
+            session.commit()
 
     def _review_status_for_action(self, review) -> str:
         if review.action == "supplement":

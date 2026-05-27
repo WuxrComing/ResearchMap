@@ -439,6 +439,81 @@ def test_topic_review_redo_preserves_original_task_depth_and_increments_redo_cou
     assert updated.review_summary == "Still incomplete."
 
 
+def test_topic_review_redo_processed_twice_increments_redo_count_once(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, enqueued, session_id = dispatcher_context
+    root, target = create_review_target(runtime_engine, session_id, redo_count=0)
+    review = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-3",
+            "assistant",
+            review_card("Needs another pass.", "fail", 2, "redo"),
+            agent_name="Topic Agent",
+            task_type="review",
+            root_user_message_id=root.id,
+            target_message_id=target.id,
+        ),
+    )
+
+    first_tasks = dispatcher.handle_message_saved(review.id)
+    second_tasks = dispatcher.handle_message_saved(review.id)
+
+    assert len(first_tasks) == 1
+    assert second_tasks == []
+    assert len(enqueued) == 1
+    updated = load_message(runtime_engine, target.id)
+    assert updated.redo_count == 1
+
+
+def test_topic_review_redo_enqueue_failure_does_not_increment_redo_count_and_retry_enqueues(
+    runtime_engine,
+    runtime_session_id,
+):
+    enqueued = []
+    should_raise = True
+
+    def enqueue_task(task):
+        nonlocal should_raise
+        if should_raise:
+            should_raise = False
+            raise RuntimeError("enqueue failed")
+        enqueued.append(task)
+
+    dispatcher = AgentDispatcher(runtime_engine, enqueue_task)
+    root, target = create_review_target(runtime_engine, runtime_session_id, redo_count=0)
+    review = save_message(
+        runtime_engine,
+        **message_kwargs(
+            runtime_session_id,
+            "msg-3",
+            "assistant",
+            review_card("Needs another pass.", "fail", 2, "redo"),
+            agent_name="Topic Agent",
+            task_type="review",
+            root_user_message_id=root.id,
+            target_message_id=target.id,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="enqueue failed"):
+        dispatcher.handle_message_saved(review.id)
+
+    after_failure = load_message(runtime_engine, target.id)
+    assert after_failure.redo_count == 0
+
+    retry_tasks = dispatcher.handle_message_saved(review.id)
+
+    assert len(retry_tasks) == 1
+    assert retry_tasks[0].redo_count == 1
+    assert len(enqueued) == 1
+    after_retry = load_message(runtime_engine, target.id)
+    assert after_retry.redo_count == 1
+
+
 def test_topic_review_redo_at_max_rounds_creates_topic_fallback_task(
     runtime_engine,
     dispatcher_context,
@@ -537,6 +612,58 @@ def test_topic_review_supplement_dispatch_increments_dispatch_depth_by_one(
 
     assert len(tasks) == 1
     assert tasks[0].dispatch_depth == 3
+
+
+def test_topic_review_supplement_enqueue_failure_remains_retry_safe(
+    runtime_engine,
+    runtime_db_session,
+    runtime_session_id,
+):
+    enqueued = []
+    should_raise = True
+
+    def enqueue_task(task):
+        nonlocal should_raise
+        if should_raise:
+            should_raise = False
+            raise RuntimeError("enqueue failed")
+        enqueued.append(task)
+
+    dispatcher = AgentDispatcher(runtime_engine, enqueue_task)
+    root, target = create_review_target(runtime_engine, runtime_session_id)
+    review = save_message(
+        runtime_engine,
+        **message_kwargs(
+            runtime_session_id,
+            "msg-3",
+            "assistant",
+            review_card("Ask memory.", "partial", 3, "supplement")
+            + "\n\n@Memory Agent find context.",
+            agent_name="Topic Agent",
+            task_type="review",
+            root_user_message_id=root.id,
+            target_message_id=target.id,
+            dispatch_depth=2,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="enqueue failed"):
+        dispatcher.handle_message_saved(review.id)
+
+    after_failure = load_message(runtime_engine, target.id)
+    assert after_failure.review_status is None
+    assert after_failure.review_score is None
+    assert after_failure.review_summary is None
+
+    retry_tasks = dispatcher.handle_message_saved(review.id)
+
+    assert len(retry_tasks) == 1
+    assert retry_tasks[0].target_agent == "Memory Agent"
+    assert len(enqueued) == 1
+    after_retry = load_message(runtime_engine, target.id)
+    assert after_retry.review_status == "supplemented"
+    assert after_retry.review_score == 3
+    assert after_retry.review_summary == "Ask memory."
 
 
 def test_topic_review_supplement_dispatch_over_max_depth_is_rejected(
