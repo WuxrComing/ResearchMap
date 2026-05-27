@@ -29,6 +29,20 @@ const Sidebar = ({ link: _link, meta, isMobile }: SidebarProps) => {
 
   useEffect(() => { fetchWorkspaces(); }, []);
 
+  // Set header breadcrumb on direct navigation / page refresh
+  useEffect(() => {
+    if (currentWorkspaceId && workspaces.length > 0) {
+      const ws = workspaces.find(w => w.id === currentWorkspaceId);
+      if (ws) {
+        setHeader({ title: ws.title, breadcrumbs: [{ name: ws.title, href: `/chat/${ws.id}`, current: true }] });
+      }
+    } else if (location.pathname === "/" || location.pathname === "/workspaces") {
+      setHeader({ title: "课题管理", breadcrumbs: [{ name: "课题管理", href: "/workspaces", current: true }] });
+    } else if (location.pathname === "/settings") {
+      setHeader({ title: "Settings", breadcrumbs: [{ name: "Settings", href: "/settings", current: true }] });
+    }
+  }, [currentWorkspaceId, workspaces, location.pathname]);
+
   const filtered = query.trim()
     ? workspaces.filter(w => w.title.toLowerCase().includes(query.toLowerCase()))
     : workspaces;
