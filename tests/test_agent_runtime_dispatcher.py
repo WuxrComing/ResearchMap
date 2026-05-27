@@ -110,6 +110,50 @@ def message_kwargs(session_id, message_id, role, content, **kwargs):
     }
 
 
+def review_card(summary, correctness, score, action, issues=None):
+    issue_lines = "\n".join(f"- {issue}" for issue in (issues or ["none"]))
+    return (
+        "[REVIEW]\n"
+        f"summary: {summary}\n"
+        f"correctness: {correctness}\n"
+        f"score: {score}\n"
+        "issues:\n"
+        f"{issue_lines}\n"
+        f"action: {action}\n"
+        "[/REVIEW]"
+    )
+
+
+def create_review_target(runtime_engine, session_id, **kwargs):
+    root = save_message(
+        runtime_engine,
+        **message_kwargs(session_id, "msg-1", "user", "Root request."),
+    )
+    target_kwargs = {
+        "agent_name": "Paper Agent",
+        "root_user_message_id": root.id,
+        "trigger_message_id": root.id,
+        "dispatch_depth": 2,
+    }
+    target_kwargs.update(kwargs)
+    target = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-2",
+            "assistant",
+            "Paper answer.",
+            **target_kwargs,
+        ),
+    )
+    return root, target
+
+
+def load_message(runtime_engine, message_id):
+    with Session(runtime_engine) as session:
+        return session.get(ChatMessage, message_id)
+
+
 @pytest.fixture
 def router(runtime_db_session):
     return MessageRouter(runtime_db_session)
@@ -293,6 +337,263 @@ def test_non_topic_assistant_message_creates_topic_review_task_with_target(
         == "请审查 Paper Agent 的目标回复，只输出 [REVIEW]...[/REVIEW] 审查卡片。"
     )
     assert task.dispatch_depth == 3
+
+
+def test_topic_review_accept_updates_target_review_fields_and_creates_no_tasks(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, enqueued, session_id = dispatcher_context
+    root, target = create_review_target(runtime_engine, session_id)
+    review = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-3",
+            "assistant",
+            review_card("Looks correct.", "pass", 5, "accept"),
+            agent_name="Topic Agent",
+            task_type="review",
+            root_user_message_id=root.id,
+            trigger_message_id=target.id,
+            target_message_id=target.id,
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(review.id)
+
+    assert tasks == []
+    assert enqueued == []
+    updated = load_message(runtime_engine, target.id)
+    assert updated.review_status == "passed"
+    assert updated.review_score == 5
+    assert updated.review_summary == "Looks correct."
+
+
+def test_topic_review_redo_creates_redo_task_for_original_target_agent(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, _, session_id = dispatcher_context
+    root, target = create_review_target(runtime_engine, session_id)
+    review = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-3",
+            "assistant",
+            review_card("Needs sources.", "fail", 2, "redo", ["Missing citations"]),
+            agent_name="Topic Agent",
+            task_type="review",
+            root_user_message_id=root.id,
+            trigger_message_id=target.id,
+            target_message_id=target.id,
+            dispatch_depth=4,
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(review.id)
+
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.target_agent == "Paper Agent"
+    assert task.task_type == "redo"
+    assert task.target_message_id == target.id
+    assert task.trigger_message_id == review.id
+
+
+def test_topic_review_redo_preserves_original_task_depth_and_increments_redo_count(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, _, session_id = dispatcher_context
+    root, target = create_review_target(
+        runtime_engine,
+        session_id,
+        dispatch_depth=3,
+        redo_count=1,
+    )
+    review = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-3",
+            "assistant",
+            review_card("Still incomplete.", "partial", 3, "redo"),
+            agent_name="Topic Agent",
+            task_type="review",
+            root_user_message_id=root.id,
+            target_message_id=target.id,
+            dispatch_depth=5,
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(review.id)
+
+    assert len(tasks) == 1
+    assert tasks[0].dispatch_depth == 3
+    assert tasks[0].redo_count == 2
+    updated = load_message(runtime_engine, target.id)
+    assert updated.redo_count == 2
+    assert updated.review_score == 3
+    assert updated.review_summary == "Still incomplete."
+
+
+def test_topic_review_redo_at_max_rounds_creates_topic_fallback_task(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, _, session_id = dispatcher_context
+    root, target = create_review_target(
+        runtime_engine,
+        session_id,
+        dispatch_depth=2,
+        redo_count=AgentDispatcher.MAX_REDO_ROUNDS,
+    )
+    review = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-3",
+            "assistant",
+            review_card("Cannot fix.", "fail", 1, "redo"),
+            agent_name="Topic Agent",
+            task_type="review",
+            root_user_message_id=root.id,
+            target_message_id=target.id,
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(review.id)
+
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.target_agent == "Topic Agent"
+    assert task.task_type == "fallback"
+    assert task.target_message_id == target.id
+    assert task.dispatch_depth == 2
+    assert task.instruction == (
+        "子 Agent 多次重做仍未通过审查。请基于群聊上下文直接给出纠正后的回答。"
+    )
+    updated = load_message(runtime_engine, target.id)
+    assert updated.redo_count == AgentDispatcher.MAX_REDO_ROUNDS
+
+
+def test_topic_review_supplement_with_memory_mention_dispatches_memory_task(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, _, session_id = dispatcher_context
+    root, target = create_review_target(runtime_engine, session_id)
+    review = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-3",
+            "assistant",
+            review_card("Need memory context.", "partial", 3, "supplement")
+            + "\n\n@Memory Agent recall user preferences.",
+            agent_name="Topic Agent",
+            task_type="review",
+            root_user_message_id=root.id,
+            target_message_id=target.id,
+            dispatch_depth=1,
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(review.id)
+
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.target_agent == "Memory Agent"
+    assert task.task_type == "dispatch"
+    assert task.instruction == "recall user preferences."
+    assert task.target_message_id == target.id
+
+
+def test_topic_review_supplement_dispatch_increments_dispatch_depth_by_one(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, _, session_id = dispatcher_context
+    root, target = create_review_target(runtime_engine, session_id, dispatch_depth=1)
+    review = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-3",
+            "assistant",
+            review_card("Ask memory.", "partial", 3, "supplement")
+            + "\n\n@Memory Agent find context.",
+            agent_name="Topic Agent",
+            task_type="review",
+            root_user_message_id=root.id,
+            target_message_id=target.id,
+            dispatch_depth=2,
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(review.id)
+
+    assert len(tasks) == 1
+    assert tasks[0].dispatch_depth == 3
+
+
+def test_topic_review_supplement_dispatch_over_max_depth_is_rejected(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, enqueued, session_id = dispatcher_context
+    root, target = create_review_target(runtime_engine, session_id, dispatch_depth=4)
+    review = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-3",
+            "assistant",
+            review_card("Ask memory.", "partial", 3, "supplement")
+            + "\n\n@Memory Agent find context.",
+            agent_name="Topic Agent",
+            task_type="review",
+            root_user_message_id=root.id,
+            target_message_id=target.id,
+            dispatch_depth=AgentDispatcher.MAX_DISPATCH_DEPTH,
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(review.id)
+
+    assert tasks == []
+    assert enqueued == []
+
+
+def test_topic_review_without_target_message_id_creates_no_task_and_writes_no_target_update(
+    runtime_engine,
+    dispatcher_context,
+):
+    dispatcher, enqueued, session_id = dispatcher_context
+    root, target = create_review_target(runtime_engine, session_id)
+    review = save_message(
+        runtime_engine,
+        **message_kwargs(
+            session_id,
+            "msg-3",
+            "assistant",
+            review_card("Looks correct.", "pass", 5, "accept"),
+            agent_name="Topic Agent",
+            task_type="review",
+            root_user_message_id=root.id,
+        ),
+    )
+
+    tasks = dispatcher.handle_message_saved(review.id)
+
+    assert tasks == []
+    assert enqueued == []
+    unchanged = load_message(runtime_engine, target.id)
+    assert unchanged.review_status is None
+    assert unchanged.review_score is None
+    assert unchanged.review_summary is None
 
 
 def test_mutating_canceled_roots_after_dispatcher_construction_gates_tasks(

@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 
 from app.models.agent_config import AgentConfig
 from app.models.chat_message import ChatMessage
-from app.services.message_router import MessageRouter
+from app.services.message_router import MessageRouter, parse_review_card
 
 
 @dataclass
@@ -64,7 +64,11 @@ class AgentDispatcher:
         message = self._load_message(message_id)
         if message is None or message.role == "system":
             return []
-        if message.role == "assistant" and message.task_type == "review":
+        if (
+            message.role == "assistant"
+            and message.task_type == "review"
+            and message.agent_name != "Topic Agent"
+        ):
             return []
 
         root_id = self._latest_root_for_message(message)
@@ -73,6 +77,12 @@ class AgentDispatcher:
 
         if message.role == "user":
             tasks = self._tasks_for_user_message(message, root_id)
+        elif (
+            message.role == "assistant"
+            and message.agent_name == "Topic Agent"
+            and message.task_type == "review"
+        ):
+            return self._handle_topic_review(message)
         elif message.role == "assistant" and message.agent_name == "Topic Agent":
             tasks = self._tasks_for_topic_message(message, root_id)
         elif message.role == "assistant":
@@ -170,6 +180,162 @@ class AgentDispatcher:
             dispatch_depth=message.dispatch_depth or 0,
             redo_count=message.redo_count or 0,
         )
+
+    def _handle_topic_review(self, message: ChatMessage) -> list[AgentTask]:
+        review = parse_review_card(message.content)
+        if review is None or not message.target_message_id:
+            return []
+
+        with Session(self.engine) as session:
+            target = session.get(ChatMessage, message.target_message_id)
+            if target is None or target.session_id != message.session_id:
+                return []
+
+            target.review_status = self._review_status_for_action(review)
+            target.review_score = review.score
+            target.review_summary = review.summary
+
+            target_id = target.id
+            target_agent = target.agent_name
+            target_dispatch_depth = target.dispatch_depth or 0
+            redo_count = target.redo_count or 0
+            root_id = (
+                message.root_user_message_id
+                or target.root_user_message_id
+                or self._latest_root_for_message(message)
+            )
+
+            redo_exhausted = (
+                review.action == "redo" and redo_count >= self.MAX_REDO_ROUNDS
+            )
+            if review.action == "redo" and not redo_exhausted:
+                redo_count += 1
+                target.redo_count = redo_count
+
+            session.add(target)
+            session.commit()
+
+        if review.action == "accept":
+            tasks = []
+        elif review.action == "redo":
+            tasks = self._tasks_for_redo_review(
+                message=message,
+                review_summary=review.summary,
+                root_id=root_id,
+                target_id=target_id,
+                target_agent=target_agent,
+                dispatch_depth=target_dispatch_depth,
+                redo_count=redo_count,
+                redo_exhausted=redo_exhausted,
+            )
+        elif review.action == "supplement":
+            tasks = self._tasks_for_supplement_review(
+                message=message,
+                root_id=root_id,
+                target_id=target_id,
+                target_dispatch_depth=target_dispatch_depth,
+            )
+        else:
+            tasks = []
+
+        enqueued: list[AgentTask] = []
+        for task in tasks:
+            if self._enqueue_once(task):
+                enqueued.append(task)
+        return enqueued
+
+    def _review_status_for_action(self, review) -> str:
+        if review.action == "supplement":
+            return "supplemented"
+        if review.correctness == "pass":
+            return "passed"
+        return "failed"
+
+    def _tasks_for_redo_review(
+        self,
+        message: ChatMessage,
+        review_summary: str,
+        root_id: str,
+        target_id: str,
+        target_agent: str,
+        dispatch_depth: int,
+        redo_count: int,
+        redo_exhausted: bool,
+    ) -> list[AgentTask]:
+        if redo_exhausted:
+            return [
+                self._make_fallback_task(
+                    message=message,
+                    root_id=root_id,
+                    target_id=target_id,
+                    dispatch_depth=dispatch_depth,
+                )
+            ]
+
+        return [
+            self._make_task(
+                session_id=message.session_id,
+                target_agent=target_agent,
+                task_type="redo",
+                instruction=review_summary,
+                root_id=root_id,
+                trigger_id=message.id,
+                target_id=target_id,
+                dispatch_depth=dispatch_depth,
+                redo_count=redo_count,
+            )
+        ]
+
+    def _make_fallback_task(
+        self,
+        message: ChatMessage,
+        root_id: str,
+        target_id: str,
+        dispatch_depth: int,
+    ) -> AgentTask:
+        return self._make_task(
+            session_id=message.session_id,
+            target_agent="Topic Agent",
+            task_type="fallback",
+            instruction="子 Agent 多次重做仍未通过审查。请基于群聊上下文直接给出纠正后的回答。",
+            root_id=root_id,
+            trigger_id=message.id,
+            target_id=target_id,
+            dispatch_depth=dispatch_depth,
+        )
+
+    def _tasks_for_supplement_review(
+        self,
+        message: ChatMessage,
+        root_id: str,
+        target_id: str,
+        target_dispatch_depth: int,
+    ) -> list[AgentTask]:
+        router = self._router()
+        instructions = split_mention_instructions(
+            message.content,
+            router,
+            source_agent="Topic Agent",
+        )
+        source_depth = (
+            message.dispatch_depth
+            if message.dispatch_depth is not None
+            else target_dispatch_depth
+        )
+        return [
+            self._make_task(
+                session_id=message.session_id,
+                target_agent=agent_name,
+                task_type="dispatch",
+                instruction=instruction,
+                root_id=root_id,
+                trigger_id=message.id,
+                target_id=target_id,
+                dispatch_depth=source_depth + 1,
+            )
+            for agent_name, instruction in instructions.items()
+            if agent_name != "Topic Agent"
+        ]
 
     def _load_message(self, message_id: str) -> ChatMessage | None:
         with Session(self.engine) as session:
