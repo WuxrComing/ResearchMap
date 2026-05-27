@@ -38,7 +38,7 @@ const AppLayout = () => {
   }, [darkMode]);
 
   return (
-    <div className="min-h-screen flex">
+    <div className="h-screen flex overflow-hidden">
       {/* Mobile menu */}
       <Dialog
         as="div"
@@ -72,7 +72,7 @@ const AppLayout = () => {
       {/* Content area */}
       <div
         className={classNames(
-          "flex-1 flex flex-col min-h-screen",
+          "flex-1 flex flex-col overflow-hidden",
           "transition-all duration-300 ease-in-out",
           "md:pl-16",
           isExpanded ? "md:pl-72" : "md:pl-16"

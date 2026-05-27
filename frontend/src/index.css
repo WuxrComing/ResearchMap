@@ -37,9 +37,9 @@
   } */
 
 html {
-  /* display: table; */
-  margin: auto;
+  margin: 0;
   height: 100%;
+  overflow: hidden;
 }
 
 body {
@@ -50,6 +50,7 @@ body {
   background: transparent;
   height: 100%;
   width: 100%;
+  overflow: hidden;
 }
 /* @import "antd/dist/antd.css"; */
 
