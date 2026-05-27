@@ -100,6 +100,7 @@ const AppLayout = () => {
               <Route path="/" element={<WorkspacePage />} />
               <Route path="/workspaces" element={<WorkspacePage />} />
               <Route path="/chat/:workspaceId" element={<ChatPage />} />
+              <Route path="/chat" element={<ChatPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Routes>
           </main>
