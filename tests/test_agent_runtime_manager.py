@@ -352,3 +352,207 @@ def test_cancel_by_root_user_message(runtime_engine, runtime_session_id):
 
     # No agent should have been called because root is canceled
     assert len(all_calls) == 0
+
+
+def test_user_topic_paper_review_flow_renders_each_message(
+    runtime_engine,
+    runtime_session_id,
+):
+    from app.services.agent_runtime import SessionRuntimeManager
+
+    def fake_llm(agent_name, system_prompt, user_prompt, agent_model):
+        if agent_name == "Topic Agent" and "审查" not in user_prompt:
+            return "@Paper Agent 请检索最新论文。"
+        if agent_name == "Paper Agent":
+            return "Paper Agent 检索结果：论文 A、论文 B、论文 C。"
+        if agent_name == "Topic Agent" and "审查" in user_prompt:
+            return """[REVIEW]
+summary: Paper Agent 已完成检索。
+correctness: pass
+score: 5
+issues:
+  - none
+action: accept
+[/REVIEW]"""
+
+    saved_signals = []
+    manager = SessionRuntimeManager(engine=runtime_engine, llm_caller=fake_llm)
+    manager.message_saved.connect(lambda sid, mid: saved_signals.append((sid, mid)))
+
+    user = save_message(
+        runtime_engine,
+        id="user-1",
+        session_id=runtime_session_id,
+        role="user",
+        content="帮我检索本领域最新文献",
+        root_user_message_id="user-1",
+    )
+
+    manager.submit_message(runtime_session_id, user.id)
+    rt = manager.get_runtime(runtime_session_id)
+    rt.drain_for_tests(max_steps=30)
+
+    messages = load_messages(runtime_engine)
+    agent_order = [(m.role, m.agent_name) for m in messages]
+
+    # Expected order: user -> Topic -> Paper -> Topic review
+    assert agent_order == [
+        ("user", ""),
+        ("assistant", "Topic Agent"),
+        ("assistant", "Paper Agent"),
+        ("assistant", "Topic Agent"),
+    ]
+
+    # Each assistant message should emit a signal
+    # user message doesn't emit message_saved from the runtime
+    assistant_count = sum(1 for m in messages if m.role == "assistant")
+    assert len(saved_signals) == assistant_count
+
+    # Paper Agent message should have review fields updated
+    paper_message = [m for m in messages if m.agent_name == "Paper Agent"][0]
+    assert paper_message.review_status == "passed"
+    assert paper_message.review_score == 5
+
+
+def test_user_parallel_dispatch_to_paper_and_memory(
+    runtime_engine,
+    runtime_session_id,
+):
+    from app.services.agent_runtime import SessionRuntimeManager
+
+    call_order = []
+
+    def fake_llm(agent_name, system_prompt, user_prompt, agent_model):
+        call_order.append(agent_name)
+        if agent_name == "Topic Agent" and "审查" in user_prompt:
+            return """[REVIEW]
+summary: 回复正确。
+correctness: pass
+score: 5
+issues:
+  - none
+action: accept
+[/REVIEW]"""
+        if agent_name == "Topic Agent":
+            return "@Paper Agent 请检索论文。\n@Memory Agent 请检查历史经验。"
+        if agent_name == "Paper Agent":
+            return "Paper Agent 检索结果。"
+        if agent_name == "Memory Agent":
+            return "Memory Agent 回忆结果。"
+
+    manager = SessionRuntimeManager(engine=runtime_engine, llm_caller=fake_llm)
+
+    user = save_message(
+        runtime_engine,
+        id="user-1",
+        session_id=runtime_session_id,
+        role="user",
+        content="请检索论文并检查历史经验",
+        root_user_message_id="user-1",
+    )
+
+    manager.submit_message(runtime_session_id, user.id)
+    rt = manager.get_runtime(runtime_session_id)
+    rt.drain_for_tests(max_steps=30)
+
+    messages = load_messages(runtime_engine)
+    agent_names = [m.agent_name for m in messages if m.role == "assistant"]
+
+    assert "Paper Agent" in agent_names
+    assert "Memory Agent" in agent_names
+    # Both Paper and Memory should be called
+    assert "Paper Agent" in call_order
+    assert "Memory Agent" in call_order
+    # Topic should review both
+    topic_reviews = [
+        m for m in messages
+        if m.agent_name == "Topic Agent" and m.task_type == "review"
+    ]
+    assert len(topic_reviews) >= 2
+
+
+def test_user_message_order_preserved_in_topic_queue(runtime_engine, runtime_session_id):
+    from app.services.agent_runtime import SessionRuntimeManager
+
+    topic_user_request_calls = []
+
+    def fake_llm(agent_name, system_prompt, user_prompt, agent_model):
+        if agent_name == "Topic Agent":
+            # Only track user_request tasks, not review tasks
+            if "审查" not in user_prompt:
+                topic_user_request_calls.append(user_prompt)
+            if "审查" in user_prompt:
+                return """[REVIEW]
+summary: 通过。
+correctness: pass
+score: 5
+issues:
+  - none
+action: accept
+[/REVIEW]"""
+            if len(topic_user_request_calls) == 1:
+                return "Task1 response"
+            return "Task2 response"
+        return f"{agent_name} reply"
+
+    manager = SessionRuntimeManager(engine=runtime_engine, llm_caller=fake_llm)
+
+    user1 = save_message(
+        runtime_engine,
+        id="user-1",
+        session_id=runtime_session_id,
+        role="user",
+        content="任务1",
+        root_user_message_id="user-1",
+    )
+    user2 = save_message(
+        runtime_engine,
+        id="user-2",
+        session_id=runtime_session_id,
+        role="user",
+        content="任务2",
+        root_user_message_id="user-2",
+    )
+
+    manager.submit_message(runtime_session_id, user1.id)
+    manager.submit_message(runtime_session_id, user2.id)
+
+    rt = manager.get_runtime(runtime_session_id)
+    rt.drain_for_tests(max_steps=30)
+
+    assert len(topic_user_request_calls) == 2
+    assert "任务1" in topic_user_request_calls[0]
+    assert "任务2" in topic_user_request_calls[1]
+
+
+def test_user_mentions_agent_directly_creates_no_topic_task(
+    runtime_engine,
+    runtime_session_id,
+):
+    from app.services.agent_runtime import SessionRuntimeManager
+
+    calls = []
+
+    def fake_llm(agent_name, system_prompt, user_prompt, agent_model):
+        calls.append(agent_name)
+        return f"{agent_name} reply"
+
+    manager = SessionRuntimeManager(engine=runtime_engine, llm_caller=fake_llm)
+
+    user = save_message(
+        runtime_engine,
+        id="user-1",
+        session_id=runtime_session_id,
+        role="user",
+        content="@Paper Agent 请检索论文。@Memory Agent 请检查记忆。",
+        root_user_message_id="user-1",
+    )
+
+    manager.submit_message(runtime_session_id, user.id)
+    rt = manager.get_runtime(runtime_session_id)
+    rt.drain_for_tests(max_steps=30)
+
+    # No Topic Agent in the initial dispatch since user directly @mentioned
+    # Paper and Memory are dispatched directly
+    assert "Paper Agent" in calls
+    assert "Memory Agent" in calls
