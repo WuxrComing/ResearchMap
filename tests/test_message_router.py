@@ -2,7 +2,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from app.agents.definitions import DEFAULT_AGENTS
 from app.models.agent_config import AgentConfig
-from app.services.message_router import MessageRouter, RoutedAgent, parse_dispatch_blocks
+from app.services.message_router import MessageRouter, RoutedAgent
 
 
 @pytest.fixture
@@ -133,21 +133,10 @@ class TestDefaultAgentPrompts:
         assert "@Agent" in topic_prompt
 
 
-class TestParseDispatchBlocks:
-    def test_parse_single_dispatch_block(self):
-        text = """我来安排检索。
->>DISPATCH>> @Paper Agent
-请检索小目标检测领域 2023-2025 年最新代表性论文。
->>END_DISPATCH>>"""
-
-        dispatches = parse_dispatch_blocks(text)
-
-        assert len(dispatches) == 1
-        assert dispatches[0].target_agent == "Paper Agent"
-        assert "2023-2025" in dispatches[0].task
-
-    def test_ignores_text_without_dispatch(self):
-        assert parse_dispatch_blocks("直接回答用户问题") == []
+class TestNoDispatchBlocks:
+    def test_parse_dispatch_blocks_no_longer_exists(self):
+        import app.services.message_router as router_module
+        assert not hasattr(router_module, "parse_dispatch_blocks")
 
 
 class TestBuildRedoMessage:

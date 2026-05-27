@@ -44,8 +44,8 @@ class TestMessageRouting:
         assert len(agents) == 1
         assert agents[0].name == "Topic Agent"
 
-    def test_auto_collab_dedup(self, populated_db):
-        """Already-called agents are not re-called."""
+    def test_mention_dedup(self, populated_db):
+        """Already-called agents can be filtered by dedup logic."""
         router = MessageRouter(populated_db)
         mentions = router.parse_mentions("@Topic Agent @Paper Agent")
         called = {"Topic Agent"}

@@ -13,27 +13,6 @@ class ReviewResult:
     action: str            # "accept" | "redo" | "supplement"
 
 
-@dataclass
-class DispatchRequest:
-    target_agent: str
-    task: str
-
-
-def parse_dispatch_blocks(text: str) -> list[DispatchRequest]:
-    """Parse public Topic Agent dispatch blocks from a chat message."""
-    if not text:
-        return []
-
-    dispatches = []
-    pattern = r'>>DISPATCH>>\s*@([^\n]+?)\s*\n(.*?)\n\s*>>END_DISPATCH>>'
-    for match in re.finditer(pattern, text, re.DOTALL):
-        target_agent = match.group(1).strip()
-        task = match.group(2).strip()
-        if target_agent and task:
-            dispatches.append(DispatchRequest(target_agent=target_agent, task=task))
-    return dispatches
-
-
 def parse_review_card(text: str) -> ReviewResult | None:
     """Parse [REVIEW]...[/REVIEW] card from Topic Agent output.
     Returns None if no valid review card is found."""
