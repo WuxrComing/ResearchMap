@@ -16,24 +16,26 @@ const ChatView: React.FC<{ sessionId: string }> = ({ sessionId }) => {
   const [loadingMore, setLoadingMore] = useState(false);
   const allMessages = useRef<any[]>([]);
   const userScrolledUp = useRef(false);
+  const isInitialLoad = useRef(true);
 
   // Load all messages, but only display latest PAGE_SIZE
   const loadMessages = async () => {
     try {
+      isInitialLoad.current = true;
       const data = await api.listMessages(sessionId);
       allMessages.current = data;
       setHasMore(data.length > PAGE_SIZE);
-      // Show latest PAGE_SIZE messages
       setMessages(data.slice(-PAGE_SIZE));
     } catch { /* */ }
   };
 
   useEffect(() => { loadMessages(); }, [sessionId]);
 
-  // Auto-scroll to bottom when messages change (unless user scrolled up)
+  // Auto-scroll to bottom when messages change (instant on load, smooth during streaming)
   useEffect(() => {
     if (!userScrolledUp.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      bottomRef.current?.scrollIntoView({ behavior: isInitialLoad.current ? "auto" : "smooth" });
+      isInitialLoad.current = false;
     }
   }, [messages, pendingAgents]);
 
