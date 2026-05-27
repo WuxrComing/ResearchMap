@@ -5,7 +5,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from sqlmodel import Session, select
 
 from app.models.agent_config import AgentConfig
@@ -818,6 +818,42 @@ def _find_generic_agent_mention_spans(text: str) -> list[MentionSpan]:
     return spans
 
 
+class _RuntimeWorkerThread(QThread):
+    """Drains one agent's queue in a background thread."""
+
+    def __init__(self, runtime, agent_name: str, parent=None):
+        super().__init__(parent)
+        self._runtime = runtime
+        self._agent_name = agent_name
+
+    def run(self):
+        while not self._runtime.closed:
+            queue = self._runtime.queues.get(self._agent_name)
+            if not queue:
+                break
+            try:
+                task = queue.popleft()
+            except IndexError:
+                break
+
+            if task.root_user_message_id in self._runtime.canceled_roots:
+                continue
+
+            worker = self._runtime._ensure_worker(self._agent_name)
+            self._runtime._active_workers_count += 1
+            try:
+                message_id = worker.process_one(task)
+            finally:
+                self._runtime._active_workers_count -= 1
+
+            if message_id is not None:
+                self._runtime.on_message_saved(message_id)
+                self._runtime._start_draining()
+
+        self._runtime.queues.pop(self._agent_name, None)
+        self._runtime._threads.pop(self._agent_name, None)
+
+
 class SessionRuntime:
     def __init__(
         self,
@@ -836,10 +872,12 @@ class SessionRuntime:
         self.status_changed_signal = status_changed_signal
         self.queues: dict[str, deque[AgentTask]] = {}
         self.workers: dict[str, AgentWorker] = {}
+        self._threads: dict[str, _RuntimeWorkerThread] = {}
         self.processed_keys: set[tuple] = set()
         self.canceled_roots: set[str] = set()
         self._closed = False
         self._active_workers_count = 0
+        self._draining_sync = False
 
     @property
     def closed(self) -> bool:
@@ -864,6 +902,20 @@ class SessionRuntime:
             )
             self.workers[agent_name] = worker
         return self.workers[agent_name]
+
+    def _start_draining(self) -> None:
+        """Launch worker threads for agents with queued tasks and no active thread."""
+        if self._closed or self._draining_sync:
+            return
+        for agent_name in list(self.queues.keys()):
+            if not self.queues[agent_name]:
+                continue
+            if agent_name in self._threads and self._threads[agent_name].isRunning():
+                continue
+            self._ensure_worker(agent_name)
+            thread = _RuntimeWorkerThread(self, agent_name)
+            self._threads[agent_name] = thread
+            thread.start()
 
     def _on_worker_message_saved(self, session_id: str, message_id: str) -> None:
         if self.message_saved_signal is not None:
@@ -917,9 +969,13 @@ class SessionRuntime:
 
     def drain_for_tests(self, max_steps: int = 50) -> None:
         """Process all queued tasks synchronously. For tests only."""
-        for _ in range(max_steps):
-            if not self._drain_one():
-                break
+        self._draining_sync = True
+        try:
+            for _ in range(max_steps):
+                if not self._drain_one():
+                    break
+        finally:
+            self._draining_sync = False
 
     def cancel_root(self, root_user_message_id: str) -> None:
         self.canceled_roots.add(root_user_message_id)
@@ -934,6 +990,11 @@ class SessionRuntime:
     def close(self, reason: str = "") -> None:
         self._closed = True
         self.queues.clear()
+        for thread in list(self._threads.values()):
+            if thread.isRunning():
+                thread.quit()
+                thread.wait(3000)
+        self._threads.clear()
 
     @property
     def has_pending_tasks(self) -> bool:
@@ -967,6 +1028,11 @@ class SessionRuntimeManager(QObject):
     def submit_message(self, session_id: str, message_id: str) -> None:
         rt = self.get_runtime(session_id)
         rt.on_message_saved(message_id)
+
+    def start_draining(self, session_id: str) -> None:
+        """Start worker threads for any queued tasks in the session."""
+        rt = self.get_runtime(session_id)
+        rt._start_draining()
 
     def cancel_root(self, session_id: str, root_user_message_id: str) -> None:
         # Ensure the runtime exists so cancellation is recorded even before the

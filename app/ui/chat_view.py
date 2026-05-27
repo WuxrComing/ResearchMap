@@ -578,6 +578,7 @@ class ChatView(QWidget):
 
         # Submit to runtime — dispatcher owns mention parsing and task routing
         self._runtime_manager.submit_message(sid, db_msg_id)
+        self._runtime_manager.start_draining(sid)
 
     def shutdown_workers(self):
         """Shut down the runtime manager. Call on app exit."""
