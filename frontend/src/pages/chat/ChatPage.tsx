@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useWorkspaceStore, useSessionStore } from "../../hooks/store";
 import { api } from "../../api/client";
@@ -49,7 +49,7 @@ const ResizeHandle: React.FC<{ onResize: (delta: number) => void }> = ({ onResiz
 const ChatPage: React.FC = () => {
   const { workspaceId } = useParams<{ workspaceId: string }>();
   const navigate = useNavigate();
-  const { workspaces, setSelectedId } = useWorkspaceStore();
+  const { workspaces, setWorkspaces, setSelectedId } = useWorkspaceStore();
   const { sessions, setSessions, activeId, setActiveId, setLoading } = useSessionStore();
   const [mindmapVisible, setMindmapVisible] = useState(true);
   const [sessionWidth, setSessionWidth] = useState(224);
@@ -64,6 +64,10 @@ const ChatPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    fetchWorkspaces();
+  }, []);
+
+  useEffect(() => {
     if (!workspaceId) {
       if (workspaces.length > 0) {
         navigate(`/chat/${workspaces[0].id}`, { replace: true });
@@ -74,7 +78,11 @@ const ChatPage: React.FC = () => {
     }
     setSelectedId(workspaceId);
     fetchSessions();
-  }, [workspaceId]);
+  }, [workspaceId, workspaces]);
+
+  const fetchWorkspaces = async () => {
+    try { setWorkspaces(await api.listWorkspaces()); } catch { /* */ }
+  };
 
   const fetchSessions = async () => {
     if (!workspaceId) return;
@@ -100,7 +108,27 @@ const ChatPage: React.FC = () => {
 
   return (
     <div className="flex h-full">
-      {/* Session list */}
+      {/* Column 1: Workspace list */}
+      <div className="w-48 border-r border-secondary flex flex-col">
+        <div className="text-xs font-semibold text-secondary uppercase px-3 py-2 tracking-wider">课题</div>
+        <div className="flex-1 overflow-y-auto">
+          {workspaces.map((w) => (
+            <div
+              key={w.id}
+              onClick={() => { setActiveId(null); navigate(`/chat/${w.id}`); }}
+              className={`px-3 py-1.5 text-sm cursor-pointer truncate ${
+                w.id === workspaceId
+                  ? "bg-secondary/20 text-primary font-medium"
+                  : "text-secondary hover:bg-tertiary hover:text-primary"
+              }`}
+            >
+              {w.title}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Column 2: Session list (resizable) */}
       <div style={{ width: sessionWidth }} className="shrink-0">
         <SessionSidebar
           sessions={sessions}
@@ -113,7 +141,7 @@ const ChatPage: React.FC = () => {
 
       <ResizeHandle onResize={handleSessionResize} />
 
-      {/* Chat + Mindmap */}
+      {/* Column 3 + 4: Chat + Mindmap */}
       <div className="flex-1 flex min-w-0">
         <div className="flex-1 min-w-0">
           {activeId ? (
