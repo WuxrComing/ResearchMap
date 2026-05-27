@@ -16,16 +16,18 @@ from app.models.session import Session as SessionModel
 from app.services.agent_runtime import SessionRuntimeManager
 from app.models.agent_config import AgentConfig
 
+# Colors match autogen-studio light theme
 CHAT_BG = "#FFFFFF"
-BUBBLE_SELF = "#07C160"
-BUBBLE_OTHER = "#F0F0F0"
-TEXT_PRIMARY = "#111111"
-TEXT_SECONDARY = "#666666"
-DIVIDER = "#E0E0E0"
-HEADER_BG = "#F5F5F5"
+BUBBLE_SELF = "#edf2f7"          # autogen --color-bg-secondary
+BUBBLE_OTHER = "#f3f6f9"         # autogen --color-bg-tertiary
+TEXT_PRIMARY = "#334155"          # autogen --color-text-primary
+TEXT_SECONDARY = "#64748b"        # autogen --color-text-secondary
+DIVIDER = "#edf2f7"              # autogen --color-border-secondary
+HEADER_BG = "#FFFFFF"
+ACCENT = "#464feb"               # autogen --color-bg-accent
 
 AVATAR_COLORS = {
-    "user": "#2196F3", "Topic Agent": "#07C160", "Paper Agent": "#F9A825",
+    "user": ACCENT, "Topic Agent": "#07C160", "Paper Agent": "#F9A825",
     "Transfer Agent": "#2196F3", "Memory Agent": "#9E9E9E", "system": "#888888",
 }
 
@@ -149,7 +151,7 @@ class _MessageBubble(QFrame):
         bubble.setFrameShape(QFrame.Shape.NoFrame)
         bubble.setStyleSheet(
             f"background:{BUBBLE_OTHER};border-radius:4px;"
-            f"border:1px solid #D0D0D0;"
+            f"border:1px solid {DIVIDER};"
         )
         bubble_inner = QVBoxLayout(bubble)
         bubble_inner.setContentsMargins(10, 8, 10, 8)
@@ -244,11 +246,11 @@ class _MessageBubble(QFrame):
             bubble.sizePolicy().verticalPolicy(),
         )
 
-        text_color = "#000000" if is_user else TEXT_PRIMARY
+        text_color = TEXT_PRIMARY
         bubble.setStyleSheet(
             f"color:{text_color};border-radius:4px;font-size:13px;"
             f"background:{BUBBLE_SELF if is_user else BUBBLE_OTHER};"
-            + ("border:1px solid #D0D0D0;" if not is_user else "")
+            + (f"border:1px solid {DIVIDER};" if not is_user else "")
         )
 
         font = QFont()
@@ -320,14 +322,14 @@ class _StatusWidget(QFrame):
             text = ""
 
         self._label = QLabel(text)
-        self._label.setStyleSheet("color:#666666; font-style:italic; font-size:12px; background:transparent;")
+        self._label.setStyleSheet(f"color:{TEXT_SECONDARY}; font-style:italic; font-size:12px; background:transparent;")
         layout.addWidget(self._label)
 
         if status == "thinking":
             self._cancel_btn = QPushButton("✕ 取消")
             self._cancel_btn.setFixedHeight(20)
             self._cancel_btn.setStyleSheet(
-                "QPushButton { color:#666666; background:transparent; border:none; "
+                f"QPushButton {{ color:{TEXT_SECONDARY}; background:transparent; border:none; "
                 "font-size:11px; padding:0 4px; }"
                 "QPushButton:hover { color:#FF5252; }"
             )
@@ -350,7 +352,7 @@ class _StatusWidget(QFrame):
                 self._cancel_btn = QPushButton("✕ 取消")
                 self._cancel_btn.setFixedHeight(20)
                 self._cancel_btn.setStyleSheet(
-                    "QPushButton { color:#666666; background:transparent; border:none; "
+                    f"QPushButton {{ color:{TEXT_SECONDARY}; background:transparent; border:none; "
                     "font-size:11px; padding:0 4px; }"
                     "QPushButton:hover { color:#FF5252; }"
                 )
@@ -386,7 +388,7 @@ class ChatView(QWidget):
         self.collapse_btn = QPushButton("◀")
         self.collapse_btn.setFixedSize(28, 28)
         self.collapse_btn.setStyleSheet(
-            "QPushButton { border:none; border-radius:4px; color:#666666; font-size:12px; }"
+            f"QPushButton {{ border:none; border-radius:4px; color:{TEXT_SECONDARY}; font-size:12px; }}"
             "QPushButton:hover { background:#E8E8E8; }"
         )
         self.collapse_btn.clicked.connect(self.collapse_toggled.emit)
@@ -403,10 +405,10 @@ class ChatView(QWidget):
                 width:6px; background:transparent; margin:0;
             }}
             QScrollBar::handle:vertical {{
-                background:#C0C0C0; border-radius:3px; min-height:30px;
+                background:#D0D0D0; border-radius:3px; min-height:30px;
             }}
             QScrollBar::handle:vertical:hover {{
-                background:#A0A0A0;
+                background:{TEXT_SECONDARY};
             }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 height:0; border:none; background:none;
@@ -430,9 +432,9 @@ class ChatView(QWidget):
         self.input_edit = QLineEdit()
         self.input_edit.setPlaceholderText("输入消息...")
         self.input_edit.setStyleSheet(
-            f"QLineEdit {{ background:#F0F0F0; color:{TEXT_PRIMARY}; "
-            f"border:1px solid #D0D0D0; border-radius:4px; padding:8px; font-size:13px; }}"
-            "QLineEdit:focus { border-color:#07C160; }"
+            f"QLineEdit {{ background:#f9fafb; color:{TEXT_PRIMARY}; "
+            f"border:1px solid {DIVIDER}; border-radius:4px; padding:8px; font-size:13px; }}"
+            f"QLineEdit:focus {{ border-color:{ACCENT}; }}"
         )
         self.input_edit.returnPressed.connect(self._send_message)
         # ---- @mention completer setup ----
@@ -440,9 +442,9 @@ class ChatView(QWidget):
         row.addWidget(self.input_edit, 1)
         send = QPushButton("发送")
         send.setStyleSheet(
-            "QPushButton { background:#07C160; color:white; border:none; border-radius:4px; "
+            f"QPushButton {{ background:{ACCENT}; color:white; border:none; border-radius:4px; "
             "padding:8px 18px; font-size:13px; }"
-            "QPushButton:hover { background:#06AD56; }"
+            "QPushButton:hover { background:#3b45d4; }"
         )
         send.clicked.connect(self._send_message)
         row.addWidget(send)
@@ -474,9 +476,9 @@ class ChatView(QWidget):
 
             create_btn = QPushButton("+ 新建会话")
             create_btn.setStyleSheet(
-                "QPushButton { background:#07C160; color:white; border:none; border-radius:4px; "
+                f"QPushButton {{ background:{ACCENT}; color:white; border:none; border-radius:4px; "
                 "padding:10px 24px; font-size:14px; }"
-                "QPushButton:hover { background:#06AD56; }"
+                "QPushButton:hover { background:#3b45d4; }"
             )
             create_btn.clicked.connect(lambda: self.session_create_requested.emit(self._workspace_id))
             self.msg_layout.addWidget(create_btn, alignment=Qt.AlignmentFlag.AlignCenter)
