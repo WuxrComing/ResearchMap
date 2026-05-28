@@ -3,7 +3,7 @@ import { Routes, Route, useLocation } from "react-router-dom";
 import { Dialog } from "@headlessui/react";
 import { X } from "lucide-react";
 import { appContext } from "../hooks/provider";
-import { useConfigStore } from "../hooks/store";
+import { useConfigStore, useWorkspaceStore } from "../hooks/store";
 import Footer from "./footer";
 import "antd/dist/reset.css";
 import SideBar from "./sidebar";
@@ -12,6 +12,7 @@ import { ConfigProvider, theme } from "antd";
 import WorkspacePage from "../pages/workspaces/WorkspacePage";
 import ChatPage from "../pages/chat/ChatPage";
 import SettingsPage from "../pages/settings/SettingsPage";
+import WorkspaceSettingsDrawer from "./WorkspaceSettingsDrawer";
 
 const classNames = (...classes: (string | undefined | boolean)[]) => {
   return classes.filter(Boolean).join(" ");
@@ -62,11 +63,16 @@ const SidebarResizeHandle: React.FC = () => {
 
 const AppLayout = () => {
   const { darkMode } = React.useContext(appContext);
-  const { sidebar, sidebarWidth } = useConfigStore();
+  const { sidebar, sidebarWidth, workspaceSettingsOpen, setWorkspaceSettingsOpen } = useConfigStore();
+  const { workspaces } = useWorkspaceStore();
   const { isExpanded } = sidebar;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
   const location = useLocation();
   const link = location.pathname;
+
+  const workspaceId = location.pathname.startsWith("/chat/")
+    ? location.pathname.split("/chat/")[1] : null;
+  const workspace = workspaceId ? workspaces.find(w => w.id === workspaceId) : null;
 
   const meta = { title: "Research Map", description: "科研思维导图 Agent" };
 
@@ -153,6 +159,15 @@ const AppLayout = () => {
 
         <Footer />
       </div>
+
+      {workspace && (
+        <WorkspaceSettingsDrawer
+          workspaceId={workspace.id}
+          workspaceTitle={workspace.title}
+          open={workspaceSettingsOpen}
+          onClose={() => setWorkspaceSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 };

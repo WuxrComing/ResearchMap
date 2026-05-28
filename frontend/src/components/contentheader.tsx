@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { MoonIcon, SunIcon } from "@heroicons/react/24/outline";
-import { Menu as MenuIcon, Pencil } from "lucide-react";
+import { Menu as MenuIcon, Pencil, Cog } from "lucide-react";
 import { appContext } from "../hooks/provider";
 import { useConfigStore, useWorkspaceStore } from "../hooks/store";
 import { Link, useLocation } from "react-router-dom";
@@ -12,7 +12,7 @@ type ContentHeaderProps = {
 
 const ContentHeader = ({ onMobileMenuToggle, isMobileMenuOpen: _isMobileMenuOpen }: ContentHeaderProps) => {
   const { darkMode, setDarkMode } = React.useContext(appContext);
-  const { header } = useConfigStore();
+  const { header, setWorkspaceSettingsOpen } = useConfigStore();
   const { workspaces, setWorkspaces } = useWorkspaceStore();
   const { title, breadcrumbs } = header;
   const location = useLocation();
@@ -96,6 +96,17 @@ const ContentHeader = ({ onMobileMenuToggle, isMobileMenuOpen: _isMobileMenuOpen
                 title="编辑课题名称"
               >
                 <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+
+            {/* Settings button for workspace */}
+            {workspace && (
+              <button
+                onClick={() => setWorkspaceSettingsOpen(true)}
+                className="ml-1 p-0.5 rounded hover:bg-secondary text-secondary hover:text-accent transition-colors shrink-0"
+                title="课题设置"
+              >
+                <Cog className="h-3.5 w-3.5" />
               </button>
             )}
 
