@@ -34,5 +34,7 @@ export const api = {
   getWorkspaceSettings: (workspaceId: string) => request<any>(`/workspaces/${workspaceId}/settings`),
   updateWorkspaceSettings: (workspaceId: string, body: any) => request<any>(`/workspaces/${workspaceId}/settings`, { method: "PUT", body: JSON.stringify(body) }),
   listWorkspaceAgents: (workspaceId: string) => request<any[]>(`/workspaces/${workspaceId}/settings/agents`),
+  createWorkspaceAgent: (workspaceId: string, body: any) => request<any>(`/workspaces/${workspaceId}/settings/agents`, { method: "POST", body: JSON.stringify(body) }),
   updateWorkspaceAgent: (workspaceId: string, name: string, body: any) => request<any>(`/workspaces/${workspaceId}/settings/agents/${name}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteWorkspaceAgent: (workspaceId: string, name: string) => request<any>(`/workspaces/${workspaceId}/settings/agents/${name}`, { method: "DELETE" }),
 };
