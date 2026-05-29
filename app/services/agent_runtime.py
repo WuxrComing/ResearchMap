@@ -6,7 +6,23 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+try:
+    from PyQt6.QtCore import QObject, QThread, pyqtSignal
+except ImportError:
+
+    class QObject:  # type: ignore[no-redef]
+        def __init__(self, parent=None):
+            self._parent = parent
+
+    class QThread:  # type: ignore[no-redef]
+        pass
+
+    class pyqtSignal:  # type: ignore[no-redef]
+        def __init__(self, *args):
+            pass
+
+        def emit(self, *args):
+            pass
 from sqlmodel import Session, select
 
 from app.models.agent_config import AgentConfig

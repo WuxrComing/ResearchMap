@@ -29,4 +29,12 @@ export const api = {
   updateSettings: (body: any) => request<any>("/settings", { method: "PUT", body: JSON.stringify(body) }),
   listAgents: () => request<any[]>("/settings/agents"),
   updateAgent: (name: string, body: any) => request<any>(`/settings/agents/${name}`, { method: "PUT", body: JSON.stringify(body) }),
+
+  // Per-workspace settings
+  getWorkspaceSettings: (workspaceId: string) => request<any>(`/workspaces/${workspaceId}/settings`),
+  updateWorkspaceSettings: (workspaceId: string, body: any) => request<any>(`/workspaces/${workspaceId}/settings`, { method: "PUT", body: JSON.stringify(body) }),
+  listWorkspaceAgents: (workspaceId: string) => request<any[]>(`/workspaces/${workspaceId}/settings/agents`),
+  createWorkspaceAgent: (workspaceId: string, body: any) => request<any>(`/workspaces/${workspaceId}/settings/agents`, { method: "POST", body: JSON.stringify(body) }),
+  updateWorkspaceAgent: (workspaceId: string, name: string, body: any) => request<any>(`/workspaces/${workspaceId}/settings/agents/${name}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteWorkspaceAgent: (workspaceId: string, name: string) => request<any>(`/workspaces/${workspaceId}/settings/agents/${name}`, { method: "DELETE" }),
 };

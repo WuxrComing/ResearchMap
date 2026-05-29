@@ -21,6 +21,7 @@ def init_db():
     SQLModel.metadata.create_all(engine)
     _migrate_agent_config_description(engine)
     _migrate_chat_message_runtime_metadata(engine)
+    _migrate_workspace_agent_override_columns(engine)
     _init_fts5(engine)
     _seed_agents(engine)
     _refresh_builtin_agent_prompts(engine)
@@ -115,6 +116,27 @@ def _migrate_chat_message_runtime_metadata(engine):
                 conn.execute(sqlalchemy.text(statement))
         for statement in indexes_to_create:
             conn.execute(sqlalchemy.text(statement))
+        conn.commit()
+
+
+def _migrate_workspace_agent_override_columns(engine):
+    """Add role, description, color columns to workspace_agent_overrides."""
+    import sqlalchemy
+
+    columns_to_add = {
+        "role": "ALTER TABLE workspace_agent_overrides ADD COLUMN role TEXT",
+        "description": "ALTER TABLE workspace_agent_overrides ADD COLUMN description TEXT",
+        "color": "ALTER TABLE workspace_agent_overrides ADD COLUMN color TEXT",
+    }
+
+    with engine.connect() as conn:
+        result = conn.execute(
+            sqlalchemy.text("PRAGMA table_info('workspace_agent_overrides')")
+        )
+        existing_columns = {row[1] for row in result.fetchall()}
+        for column, statement in columns_to_add.items():
+            if column not in existing_columns:
+                conn.execute(sqlalchemy.text(statement))
         conn.commit()
 
 

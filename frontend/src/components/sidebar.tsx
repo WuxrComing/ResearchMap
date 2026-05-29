@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useConfigStore, useWorkspaceStore } from "../hooks/store";
 import { Tooltip } from "antd";
-import { Settings, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { SearchOutlined, PlusOutlined } from "@ant-design/icons";
 import Icon from "./icons";
 
@@ -155,36 +155,17 @@ const Sidebar = ({ link: _link, meta, isMobile }: SidebarProps) => {
         </div>
       )}
 
-      {/* Settings at bottom */}
+      {/* Collapse toggle at bottom */}
       <div className={classNames("mb-4", !showFull && "flex flex-col items-center gap-1")}>
-        {!showFull && !isMobile ? (
-          <>
-            <Tooltip title="设置" placement="right">
-              <Link to="/settings" onClick={() => setHeader({ title: "Settings", breadcrumbs: [{ name: "Settings", href: "/settings", current: true }] })}
-                className="group flex gap-x-3 rounded-md p-2 text-sm text-primary hover:text-accent hover:bg-secondary justify-center">
-                <Settings className="h-6 w-6 shrink-0 text-secondary group-hover:text-accent" />
-              </Link>
-            </Tooltip>
-            <Tooltip title={isExpanded ? "收起侧栏" : "展开侧栏"} placement="right">
-              <button onClick={() => setSidebarState({ isExpanded: !isExpanded })}
-                className="p-2 rounded-md hover:bg-secondary hover:text-accent text-secondary transition-colors">
-                {isExpanded ? <PanelLeftClose strokeWidth={1.5} className="h-6 w-6" /> : <PanelLeftOpen strokeWidth={1.5} className="h-6 w-6" />}
-              </button>
-            </Tooltip>
-          </>
-        ) : (
-          <div className="flex items-center gap-2 w-full">
-            <Link to="/settings" onClick={() => setHeader({ title: "Settings", breadcrumbs: [{ name: "Settings", href: "/settings", current: true }] })}
-              className="group flex flex-1 gap-x-3 rounded-md p-2 text-sm text-primary hover:text-accent hover:bg-secondary">
-              <Settings className="h-6 w-6 shrink-0 text-secondary group-hover:text-accent" />
-              {showFull && "设置"}
-            </Link>
-            <button onClick={() => setSidebarState({ isExpanded: !isExpanded })}
-              className="p-2 rounded-md hover:bg-secondary hover:text-accent text-secondary transition-colors">
-              {isExpanded ? <PanelLeftClose strokeWidth={1.5} className="h-6 w-6" /> : <PanelLeftOpen strokeWidth={1.5} className="h-6 w-6" />}
-            </button>
-          </div>
-        )}
+        <Tooltip title={isExpanded ? "收起侧栏" : "展开侧栏"} placement="right">
+          <button onClick={() => setSidebarState({ isExpanded: !isExpanded })}
+            className={classNames(
+              "p-2 rounded-md hover:bg-secondary hover:text-accent text-secondary transition-colors",
+              showFull ? "w-full flex justify-end" : ""
+            )}>
+            {isExpanded ? <PanelLeftClose strokeWidth={1.5} className="h-6 w-6" /> : <PanelLeftOpen strokeWidth={1.5} className="h-6 w-6" />}
+          </button>
+        </Tooltip>
       </div>
     </div>
   );

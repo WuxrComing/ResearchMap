@@ -51,6 +51,9 @@ export interface IConfigState {
 
   agentFlow: IAgentFlowSettings;
   setAgentFlowSettings: (settings: Partial<IAgentFlowSettings>) => void;
+
+  workspaceSettingsOpen: boolean;
+  setWorkspaceSettingsOpen: (open: boolean) => void;
 }
 
 const DEFAULT_AGENT_FLOW_SETTINGS: IAgentFlowSettings = {
@@ -95,6 +98,9 @@ export const useConfigStore = create<IConfigState>()(
         set((state) => ({ sidebar: { ...state.sidebar, isExpanded: true } })),
       toggleSidebar: () =>
         set((state) => ({ sidebar: { ...state.sidebar, isExpanded: !state.sidebar.isExpanded } })),
+
+      workspaceSettingsOpen: false,
+      setWorkspaceSettingsOpen: (open: boolean) => set({ workspaceSettingsOpen: open }),
     }),
     {
       name: "app-sidebar-state",

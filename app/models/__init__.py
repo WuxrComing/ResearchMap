@@ -8,6 +8,7 @@ from app.models.idea import Idea
 from app.models.negative_memory import NegativeMemory
 from app.models.chat_message import ChatMessage
 from app.models.agent_config import AgentConfig
+from app.models.workspace_settings import WorkspaceSettings, WorkspaceAgentOverride
 
 __all__ = [
     "Topic",
@@ -19,4 +20,6 @@ __all__ = [
     "Idea",
     "NegativeMemory",
     "ChatMessage",
+    "WorkspaceSettings",
+    "WorkspaceAgentOverride",
 ]
